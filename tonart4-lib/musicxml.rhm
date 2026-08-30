@@ -25,13 +25,15 @@ export:
   duration tie voice
   mxml_note mxml_rest music_rest time_sig divisions
   music measure mxml_measure voice_at
+  mxml_chord note_group
   // rewriters
   mxml_note_to_note mxml_rest_to_rest
+  extract_mxml_chords mxml_chord_to_note_group ungroup_notes
   mxml_measure_to_measure rewrite_in_measure rewrite_in_mxml_measure
   durations_to_intervals measure_to_music inline_music_seq
   musicxml_to_tonart
   load_musicxml
-  meta: expr_duration build_seq_like
+  meta: expr_duration build_seq_like note_has_chord
 
 // ---------------------------------------------------------------------
 // coordinates
@@ -74,11 +76,34 @@ meta:
 // objects
 // ---------------------------------------------------------------------
 
-define_object mxml_note      // mxml_note p a o type   (parsed note)
+define_object mxml_note      // mxml_note p a o type [chord]   (parsed note)
 define_object mxml_rest      // mxml_rest type
+define_object mxml_chord     // mxml_chord [[p,a,o], ...] type  (grouped notes)
+define_object note_group     // note_group [[p,a,o], ...]       (simultaneous notes)
 define_object music_rest     // a tonart rest
 define_object time_sig       // time_sig n d
 define_object divisions      // divisions n
+
+meta:
+  // does an mxml_note carry a trailing `chord` marker?
+  fun note_has_chord(e):
+    match e
+    | 'mxml_note $_ $_ $_ $_ $extra ...':
+        [extra, ...].filter(~keep: fun (x): head_of(x) == #'chord).length() > 0
+    | ~else: #false
+  // build an mxml_chord from a group of notes in source order (ns[0] is the
+  // base note, carrying the canonical modifiers and coordinates)
+  fun mxml_notes_to_chord(ns):
+    def base = ns[0]
+    let [md, ...]:
+      match base
+      | 'mxml_note $_ $_ $_ $m ...':
+          // the base note's modifiers, minus any chord marker
+          [m, ...].filter(~keep: fun (x): head_of(x) != #'chord)
+    let [pt, ...]:
+      for List (n in ns):
+        match n | 'mxml_note $p $a $o $_ ...': '[$p, $a, $o]'
+    set_ctxt('mxml_chord [$pt, ...] $md ...', get_ctxt(base))
 
 // ---------------------------------------------------------------------
 // embeddings: seq-like containers whose block body is rewritten and held
@@ -123,6 +148,52 @@ define_mapping_rewriter mxml_rest_to_rest over mxml_rest:
   fun (stx, r):
     [set_ctxt('music_rest', get_ctxt(r))]
 
+// extract_mxml_chords: walk the notes/rests in scope and group each run of
+// a base note followed by `chord`-marked notes into one mxml_chord, giving
+// each group (or lone note) a fresh index.  Runs inside a seq.
+define_rewriter extract_mxml_chords:
+  fun (expr):
+    def items:
+      current_ctxt().filter(~keep: fun (e): head_of(e) == #'mxml_note || head_of(e) == #'mxml_rest)
+    // split into groups: a base note (or rest) starts a group; `chord`-marked
+    // notes append to the current group
+    def groups = Box([])
+    def cur = Box([])
+    fun close():
+      when cur.value.length() > 0 | groups.value := groups.value ++ [cur.value]
+    for (e in items):
+      cond
+      | head_of(e) == #'mxml_note && note_has_chord(e):
+          cur.value := cur.value ++ [e]
+      | ~else:
+          close()
+          cur.value := [e]
+    close()
+    // emit each group (single note/rest, or a chord) with its index
+    let [r, ...]:
+      for List (g in groups.value, idx in 0 ..):
+        def ix = 'index $(Syntax.make(idx))'
+        if g.length() == 1
+        | put_in_id_ctxt(g[0], ix)
+        | put_in_id_ctxt(mxml_notes_to_chord(g), ix)
+    ['replace_full_context: $r ; ...']
+
+// mxml_chord [[p,a,o], ...] ...  ->  note_group [[p,a,o], ...]
+define_mapping_rewriter mxml_chord_to_note_group over mxml_chord:
+  fun (stx, c):
+    match c
+    | 'mxml_chord [$p, ...] $_ ...':
+        [set_ctxt('note_group [$p, ...]', get_ctxt(c))]
+
+// note_group [[p,a,o], ...]  ->  the notes, all at the group's coordinates
+define_mapping_rewriter ungroup_notes over note_group:
+  fun (stx, ng):
+    match ng
+    | 'note_group [$pitch, ...]':
+        for values(acc = []) (p in [pitch, ...]):
+          match p
+          | '[$pp, $aa, $oo]': acc ++ [set_ctxt('note $pp $aa $oo', get_ctxt(ng))]
+
 // ---------------------------------------------------------------------
 // rewrite-inside helpers (map a block of rewriters into each container)
 // ---------------------------------------------------------------------
@@ -145,7 +216,8 @@ define_mapping_rewriter mxml_measure_to_measure over mxml_measure:
       rewrite_in(embed_items(m),
                  ['rewrite_in_seq:
                      mxml_note_to_note
-                     mxml_rest_to_rest'])
+                     mxml_rest_to_rest
+                     mxml_chord_to_note_group'])
     [build_seq_like(#'measure, m, converted)]
 
 // ---------------------------------------------------------------------
@@ -206,9 +278,13 @@ define_mapping_rewriter inline_music_seq over seq:
 define_rewriter musicxml_to_tonart:
   fun (expr):
     ['rewrite_in_seq:
+        rewrite_in_mxml_measure:
+          rewrite_in_seq:
+            extract_mxml_chords
         mxml_measure_to_measure
         rewrite_in_measure:
           durations_to_intervals
+          ungroup_notes
         measure_to_music
      ',
      'inline_music_seq']
@@ -234,7 +310,9 @@ meta:
         def st = mx_sym(mx_ref(n, 1))
         def al = mx_num(mx_ref(n, 2))
         def oc = mx_num(mx_ref(n, 3))
-        'at [duration $dur]: mxml_note $st $al $oc $ty'
+        if mx_ref(n, 6)                                   // chord?
+        | 'at [duration $dur]: mxml_note $st $al $oc $ty chord'
+        | 'at [duration $dur]: mxml_note $st $al $oc $ty'
   // one parsed measure -> an mxml_measure form
   fun mx_build_measure(m):
     def divisions = mx_ref(m, 0)
