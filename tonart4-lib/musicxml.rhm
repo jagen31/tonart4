@@ -1,0 +1,210 @@
+#lang rhombus/and_meta
+
+// =====================================================================
+// tonart4 -- musicxml -> tonart.
+//
+// A port of tonart3's musicxml library (the *reading* direction).  The
+// XML file reader lives in `private/mxml-read.rkt`; this module holds the
+// art forms and the rewriter chain that turns parsed musicxml note/rest
+// forms into tonart `note`s laid out on the interval timeline inside a
+// `music`.
+//
+// This first cut handles monophonic music (one note per beat-position);
+// chords (note groups) and directions (lyrics/text) are not yet ported.
+// =====================================================================
+
+import:
+  facade open
+  "private/lib.rhm" open        // note, tone, ... (we emit `note`)
+
+export:
+  // coordinates / objects the pipeline uses
+  duration tie voice
+  mxml_note mxml_rest music_rest time_sig divisions
+  music measure mxml_measure voice_at
+  // rewriters
+  mxml_note_to_note mxml_rest_to_rest
+  mxml_measure_to_measure rewrite_in_measure rewrite_in_mxml_measure
+  durations_to_intervals measure_to_music inline_music_seq
+  musicxml_to_tonart
+  meta: expr_duration build_seq_like
+
+// ---------------------------------------------------------------------
+// coordinates
+// ---------------------------------------------------------------------
+
+// duration: the raw musicxml duration of a note; carried, inner wins
+define_coordinate duration:
+  merge: fun (l, r, _l, _r, _c): (r || l)
+  within: fun (l, r, _l, _r, _c): #true
+// tie: start / stop / continue; carried
+define_coordinate tie:
+  merge: fun (l, r, _l, _r, _c): (r || l)
+  within: fun (l, r, _l, _r, _c): #true
+// voice: a subset coordinate (union on merge, subset for within?)
+define_coordinate voice:
+  merge:
+    fun (l, r, _l, _r, _c):
+      cond
+      | l && r:
+          block:
+            let [a, ...] = dedup_terms(args_of(l) ++ args_of(r))
+            'voice $a ...'
+      | ~else: (r || l)
+  within:
+    fun (l, r, _l, _r, _c):
+      def ls = args_of(l).map(fun (a): a.unwrap())
+      for values(ok = #true) (x in args_of(r).map(fun (a): a.unwrap())):
+        ok && (ls.filter(~keep: fun (y): y == x).length() > 0)
+
+meta:
+  fun dedup_terms(items):
+    for values(acc = []) (a in items):
+      if acc.filter(~keep: fun (b): b.unwrap() == a.unwrap()).length() > 0 | acc | acc ++ [a]
+  // the duration value on a form, or #false
+  fun expr_duration(e):
+    def c = context_ref(get_ctxt(e), #'duration)
+    if c | args_of(c)[0].unwrap() | #false
+
+// ---------------------------------------------------------------------
+// objects
+// ---------------------------------------------------------------------
+
+define_object mxml_note      // mxml_note p a o type   (parsed note)
+define_object mxml_rest      // mxml_rest type
+define_object music_rest     // a tonart rest
+define_object time_sig       // time_sig n d
+define_object divisions      // divisions n
+
+// ---------------------------------------------------------------------
+// embeddings: seq-like containers whose block body is rewritten and held
+// ---------------------------------------------------------------------
+
+define_embedding music:
+  fun (expr): rewrite(body_of(expr))
+define_embedding measure:
+  fun (expr): rewrite(body_of(expr))
+define_embedding mxml_measure:
+  fun (expr): rewrite(body_of(expr))
+
+meta:
+  // items held inside an embedding (its rewritten inner)
+  fun embed_items(e): e.group_property(#'inner) || []
+  // rebuild an embedding form `head: item; ...` carrying src's coordinates
+  fun build_seq_like(head_id, src, items):
+    block:
+      let [it, ...] = items
+      set_ctxt('$head_id: $it ; ...', get_ctxt(src))
+
+// voice_at [v, ...]: body   ==   at [voice v ...]: body
+define_rewriter voice_at:
+  fun (expr):
+    match expr
+    | 'voice_at [$v, ...]: $body; ...':
+        ['at [voice $v ...]: $body; ...']
+
+// ---------------------------------------------------------------------
+// per-object conversions (mapping rewriters)
+// ---------------------------------------------------------------------
+
+// mxml_note p a o type ...  ->  note p a o     (keeping its coordinates)
+define_mapping_rewriter mxml_note_to_note over mxml_note:
+  fun (stx, n):
+    match n
+    | 'mxml_note $p $a $o $_ ...':
+        [set_ctxt('note $p $a $o', get_ctxt(n))]
+
+// mxml_rest ...  ->  music_rest
+define_mapping_rewriter mxml_rest_to_rest over mxml_rest:
+  fun (stx, r):
+    [set_ctxt('music_rest', get_ctxt(r))]
+
+// ---------------------------------------------------------------------
+// rewrite-inside helpers (map a block of rewriters into each container)
+// ---------------------------------------------------------------------
+
+define_mapping_rewriter rewrite_in_measure over measure:
+  fun (stx, m):
+    [build_seq_like(#'measure, m, rewrite_in(embed_items(m), body_of(stx)))]
+
+define_mapping_rewriter rewrite_in_mxml_measure over mxml_measure:
+  fun (stx, m):
+    [build_seq_like(#'mxml_measure, m, rewrite_in(embed_items(m), body_of(stx)))]
+
+// ---------------------------------------------------------------------
+// mxml_measure -> measure: convert the notes/rests inside, keep the rest
+// ---------------------------------------------------------------------
+
+define_mapping_rewriter mxml_measure_to_measure over mxml_measure:
+  fun (stx, m):
+    def converted:
+      rewrite_in(embed_items(m),
+                 ['rewrite_in_seq:
+                     mxml_note_to_note
+                     mxml_rest_to_rest'])
+    [build_seq_like(#'measure, m, converted)]
+
+// ---------------------------------------------------------------------
+// durations -> intervals: lay a seq's items out end to end by duration
+// ---------------------------------------------------------------------
+
+define_mapping_rewriter durations_to_intervals over seq:
+  fun (stx, s):
+    def ordered:
+      seq_items(s).sort(fun (a, b): (expr_single_index(a) || 0) < (expr_single_index(b) || 0))
+    def t = Box(0)
+    for values(acc = []) (e in ordered):
+      def dur = expr_duration(e) || 0
+      def s0 = Syntax.make(t.value)
+      def e0 = Syntax.make(t.value + dur)
+      t.value := t.value + dur
+      def stripped = remove_from_id_ctxt(remove_from_id_ctxt(e, #'duration), #'index)
+      acc ++ ['at [interval $s0 $e0]: $stripped']
+
+// ---------------------------------------------------------------------
+// measure -> music
+// ---------------------------------------------------------------------
+
+define_mapping_rewriter measure_to_music over measure:
+  fun (stx, m):
+    [build_seq_like(#'music, m, embed_items(m))]
+
+// ---------------------------------------------------------------------
+// inline a seq of music blocks into a `--` timeline
+// ---------------------------------------------------------------------
+
+meta:
+  fun music_end(mus):
+    def items = embed_items(mus)
+    for values(mx = 0) (e in items):
+      def en = expr_end(e)
+      if en && en > mx | en | mx
+
+define_mapping_rewriter inline_music_seq over seq:
+  fun (stx, s):
+    def init_start = expr_start(s) || 0
+    def ordered:
+      seq_items(s).sort(fun (a, b): (expr_single_index(a) || 0) < (expr_single_index(b) || 0))
+    def t = Box(init_start)
+    for values(acc = []) (mus in ordered):
+      def len = music_end(mus)
+      def s0 = Syntax.make(t.value)
+      def e0 = Syntax.make(t.value + len)
+      t.value := t.value + len
+      // place this music block on its own interval span
+      let [it, ...] = embed_items(mus).map(fun (e): remove_from_id_ctxt(e, #'index))
+      acc ++ [set_ctxt('at [interval $s0 $e0]: $it ; ...', get_ctxt(mus))]
+
+// ---------------------------------------------------------------------
+// the whole musicxml -> tonart pipeline
+// ---------------------------------------------------------------------
+
+define_rewriter musicxml_to_tonart:
+  fun (expr):
+    ['rewrite_in_seq:
+        mxml_measure_to_measure
+        rewrite_in_measure:
+          durations_to_intervals
+        measure_to_music
+     ',
+     'inline_music_seq']

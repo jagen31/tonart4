@@ -1,0 +1,52 @@
+#lang rhombus/and_meta
+
+// musicxml -> tonart: the conversion pipeline, on hand-built parsed
+// musicxml forms (the shape load_musicxml produces).  Two monophonic
+// measures become tonart notes laid out on the interval timeline, then
+// realized to audio.
+
+import:
+  lib("tonart4/main.rhm") open
+  lib("tonart4/musicxml.rhm") open
+  lib("rsound/main.rkt"):
+    open
+    except: play
+
+// the parsed-musicxml shape: a voice holding a seq of mxml_measures, each
+// holding a seq of duration-tagged mxml_notes
+define_art a_piece:
+  voice_at [melody]:
+    seq:
+      ix__:
+        mxml_measure:
+          time_sig 4 4
+          divisions 1
+          seq:
+            ix__:
+              at [duration 2]: mxml_note c 0 4 half
+              at [duration 2]: mxml_note e 0 4 half
+        mxml_measure:
+          time_sig 4 4
+          divisions 1
+          seq:
+            ix__:
+              at [duration 4]: mxml_note g 0 4 whole
+
+define_realizer show:
+  fun (ctxt):
+    for (n in context_ref_all(ctxt, #'note)):
+      println("  note " +& to_string(args_of(n)[0].unwrap())
+                +& "  interval=" +& to_string(expr_interval(n)))
+    '#void'
+
+println("musicxml -> tonart notes:")
+realize show:
+  a_piece
+  musicxml_to_tonart
+
+def snd = realize music_rsound:
+            tuning equal
+            a_piece
+            musicxml_to_tonart
+            note_to_tone
+println("realized to audio -> " +& to_string(#{rs-frames}(snd)) +& " frames")
