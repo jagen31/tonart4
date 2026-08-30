@@ -10,15 +10,24 @@
 
 import:
   facade open
-  lib("rsound/main.rkt") open
+  lib("rsound/main.rkt"):
+    open
+    except: play          // rsound's `play` is a top-level-only macro; we
+                          // shadow it below with a plain function
   lib("rsound/envelope.rkt") open
 
 export:
   note tone tuning volume
   tones note_to_tone
   music_rsound
-  play                       // re-exported from rsound, to play a result
+  play                       // a function (see below), unlike rsound's macro
   meta: note_freq
+
+// rsound's own `play` is a macro that refuses expression context (it only
+// works at a module's top level), so it can't be called from the Rhombus
+// REPL, nor nested in another expression.  Wrap the underlying function
+// `play/proc` so `play(snd)` works everywhere.
+fun play(snd): #{play/proc}(snd)
 
 // ---------------------------------------------------------------------
 // objects
