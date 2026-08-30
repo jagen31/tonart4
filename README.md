@@ -39,12 +39,40 @@ def arp = realize music_rsound:
 play(arp)
 ```
 
+## MusicXML → tonart
+
+`tonart4/musicxml.rhm` ports tonart3's musicxml reader. `load_musicxml`
+reads a `.musicxml` file (relative paths resolve against the source file)
+into parsed note/measure forms; `musicxml_to_tonart` rewrites those into
+tonart `note`s laid out on the interval timeline, ready to realize:
+
+```
+#lang rhombus/and_meta
+import:
+  tonart4 open
+  lib("tonart4/musicxml.rhm") open
+
+def snd = realize music_rsound:
+            tuning equal
+            load_musicxml "sample.musicxml" [melody]
+            musicxml_to_tonart
+            note_to_tone
+play(snd)
+```
+
+Monophonic for now — chords (note groups) and directions (lyrics/text)
+are not yet ported. The XML file parsing lives in `private/mxml-read.rkt`
+(Racket, using Racket's `xml`); the art forms and the rewriter chain are
+in `musicxml.rhm`.
+
 ## Layout
 
 - `tonart4-lib/` — the library (collection `tonart4`)
   - `main.rhm` — public entry (re-exports facade + the music lib)
-  - `private/lib.rhm` — the definitions
-  - `tests/demo.rhm` — a worked example
+  - `private/lib.rhm` — the music definitions
+  - `musicxml.rhm` — MusicXML → tonart (forms + rewriter chain)
+  - `private/mxml-read.rkt` — the MusicXML file parser (Racket)
+  - `tests/` — `demo.rhm`, `musicxml-demo.rhm`, `sample.musicxml`
 - `tonart4/` — the metapackage
 
 ## Local build
