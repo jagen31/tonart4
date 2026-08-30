@@ -60,8 +60,11 @@ def snd = realize music_rsound:
 play(snd)
 ```
 
-Monophonic for now — chords (note groups) and directions (lyrics/text)
-are not yet ported. The XML file parsing lives in `private/mxml-read.rkt`
+Handles chords (`<chord/>` → simultaneous notes), ties (merged across
+barlines), and directions: a note's `<lyric>` text and any preceding
+`<direction>` words are treated as **tonart source** — `interpret_directions`
+parses them and splices in the resulting art (e.g. `lyric "do"`) at the
+note's instant. The XML file parsing lives in `private/mxml-read.rkt`
 (Racket, using Racket's `xml`); the art forms and the rewriter chain are
 in `musicxml.rhm`.
 
