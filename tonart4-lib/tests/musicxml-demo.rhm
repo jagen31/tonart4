@@ -50,3 +50,10 @@ def snd = realize music_rsound:
             musicxml_to_tonart
             note_to_tone
 println("realized to audio -> " +& to_string(#{rs-frames}(snd)) +& " frames")
+
+// the same thing, but read from an actual .musicxml file next to this test
+println("")
+println("loaded from sample.musicxml:")
+realize show:
+  load_musicxml "sample.musicxml" [melody]
+  musicxml_to_tonart

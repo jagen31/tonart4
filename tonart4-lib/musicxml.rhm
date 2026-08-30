@@ -16,6 +16,9 @@
 import:
   facade open
   "private/lib.rhm" open        // note, tone, ... (we emit `note`)
+  meta:
+    lib("tonart4/private/mxml-read.rkt") open   // parse-musicxml, at phase 1
+    lib("racket/base.rkt") as rkt
 
 export:
   // coordinates / objects the pipeline uses
@@ -27,6 +30,7 @@ export:
   mxml_measure_to_measure rewrite_in_measure rewrite_in_mxml_measure
   durations_to_intervals measure_to_music inline_music_seq
   musicxml_to_tonart
+  load_musicxml
   meta: expr_duration build_seq_like
 
 // ---------------------------------------------------------------------
@@ -208,3 +212,64 @@ define_rewriter musicxml_to_tonart:
         measure_to_music
      ',
      'inline_music_seq']
+
+// ---------------------------------------------------------------------
+// load_musicxml "file" [voice ...]  -- read a MusicXML file and produce
+// the parsed art forms (one `voice_at` per part, in file order, zipped
+// with the given voice names).  Pair with `musicxml_to_tonart` to get
+// tonart notes.  Monophonic; ties/chords/directions not yet handled.
+// ---------------------------------------------------------------------
+
+meta:
+  fun mx_sym(s): Syntax.make(rkt.#{string->symbol}(s))   // "c" -> identifier c
+  fun mx_num(n): Syntax.make(n)
+  fun mx_ref(xs, i): rkt.#{list-ref}(xs, i)
+  // one parsed note -> `at [duration d]: mxml_note p a o type` (or mxml_rest)
+  fun mx_build_note(n):
+    def dur = mx_num(mx_ref(n, 5))
+    def ty = mx_sym(mx_ref(n, 4) || "quarter")
+    if mx_ref(n, 0)                                       // rest?
+    | 'at [duration $dur]: mxml_rest $ty'
+    | block:
+        def st = mx_sym(mx_ref(n, 1))
+        def al = mx_num(mx_ref(n, 2))
+        def oc = mx_num(mx_ref(n, 3))
+        'at [duration $dur]: mxml_note $st $al $oc $ty'
+  // one parsed measure -> an mxml_measure form
+  fun mx_build_measure(m):
+    def divisions = mx_ref(m, 0)
+    def timesig = mx_ref(m, 1)
+    def hdr:
+      block:
+        def a:
+          if timesig
+          | ['time_sig $(mx_num(rkt.#{car}(timesig))) $(mx_num(rkt.#{cadr}(timesig)))']
+          | []
+        def b:
+          if divisions | ['divisions $(mx_num(divisions))'] | []
+        a ++ b
+    let [h, ...] = hdr
+    let [nf, ...] = for List (n in mx_ref(m, 2)): mx_build_note(n)
+    'mxml_measure:
+       $h ; ...
+       seq:
+         ix__:
+           $nf ; ...'
+  // one part + its voice name -> a voice_at holding a seq of measures
+  fun mx_build_part(vname, part):
+    let [mf, ...] = for List (m in mx_ref(part, 1)): mx_build_measure(m)
+    'voice_at [$vname]:
+       seq:
+         ix__:
+           $mf ; ...'
+
+define_rewriter load_musicxml:
+  fun (expr):
+    match expr
+    | 'load_musicxml $f [$voice, ...]':
+        // resolve the path relative to the source file doing the load
+        def path = #{resolve-file}(rkt.#{syntax-source}(f), f.unwrap())
+        def parts = #{parse-musicxml}(path)
+        def voices = [voice, ...]
+        for values(acc = []) (part in parts, v in voices):
+          acc ++ [mx_build_part(v, part)]
