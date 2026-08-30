@@ -8,13 +8,18 @@
       <attributes><divisions>1</divisions>
         <time><beats>4</beats><beat-type>4</beat-type></time></attributes>
       <note><pitch><step>C</step><octave>4</octave></pitch>
+        <duration>2</duration><type>half</type>
+        <lyric><text>do</text></lyric></note>
+      <note><chord/><pitch><step>E</step><octave>4</octave></pitch>
         <duration>2</duration><type>half</type></note>
-      <note><pitch><step>E</step><octave>4</octave></pitch>
-        <duration>2</duration><type>half</type></note>
+      <note><pitch><step>G</step><octave>4</octave></pitch>
+        <duration>2</duration><type>half</type>
+        <lyric><text>sol</text></lyric></note>
     </measure>
     <measure number="2">
-      <note><pitch><step>G</step><octave>4</octave></pitch>
-        <duration>4</duration><type>whole</type></note>
+      <note><pitch><step>C</step><octave>5</octave></pitch>
+        <duration>4</duration><type>whole</type>
+        <lyric><text>do</text></lyric></note>
     </measure>
   </part>
 </score-partwise>

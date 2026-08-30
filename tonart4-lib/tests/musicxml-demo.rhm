@@ -37,6 +37,10 @@ define_realizer show:
     for (n in context_ref_all(ctxt, #'note)):
       println("  note " +& to_string(args_of(n)[0].unwrap())
                 +& "  interval=" +& to_string(expr_interval(n)))
+    for (l in context_ref_all(ctxt, #'lyric)):
+      def inst = context_ref(get_ctxt(l), #'instant)
+      println("  lyric " +& to_string(args_of(l)[0].unwrap())
+                +& "  @instant " +& to_string(if inst | args_of(inst)[0].unwrap() | #false))
     '#void'
 
 println("musicxml -> tonart notes:")

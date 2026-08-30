@@ -19,21 +19,23 @@ import:
   meta:
     lib("tonart4/private/mxml-read.rkt") open   // parse-musicxml, at phase 1
     lib("racket/base.rkt") as rkt
+    lib("shrubbery/parse.rkt") as sh            // parse direction text as tonart
 
 export:
   // coordinates / objects the pipeline uses
   duration tie voice
   mxml_note mxml_rest music_rest time_sig divisions
   music measure mxml_measure voice_at
-  mxml_chord note_group
+  mxml_chord note_group direction lyric
   // rewriters
   mxml_note_to_note mxml_rest_to_rest
   extract_mxml_chords mxml_chord_to_note_group ungroup_notes
+  detach_directions_from_note detach_directions_from_rest interpret_directions
   mxml_measure_to_measure rewrite_in_measure rewrite_in_mxml_measure
   durations_to_intervals measure_to_music inline_music_seq
   musicxml_to_tonart
   load_musicxml
-  meta: expr_duration build_seq_like note_has_chord
+  meta: expr_duration build_seq_like note_has_chord note_dirs parse_tonart
 
 // ---------------------------------------------------------------------
 // coordinates
@@ -83,14 +85,30 @@ define_object note_group     // note_group [[p,a,o], ...]       (simultaneous no
 define_object music_rest     // a tonart rest
 define_object time_sig       // time_sig n d
 define_object divisions      // divisions n
+define_object direction      // direction "tonart-source"  (before interpreting)
+define_object lyric          // lyric "syllable"
 
 meta:
+  // the extra terms of an mxml_note, after `p a o type`
+  fun note_extras(e):
+    match e | 'mxml_note $_ $_ $_ $_ $x ...': [x, ...] | ~else: []
   // does an mxml_note carry a trailing `chord` marker?
   fun note_has_chord(e):
-    match e
-    | 'mxml_note $_ $_ $_ $_ $extra ...':
-        [extra, ...].filter(~keep: fun (x): head_of(x) == #'chord).length() > 0
-    | ~else: #false
+    note_extras(e).filter(~keep: fun (x): head_of(x) == #'chord).length() > 0
+  // the direction strings on an mxml_note's `[dir, ...]` bracket (or [])
+  fun note_dirs(e):
+    def brs = note_extras(e).filter(~keep: fun (x): match x | '[$_, ...]': #true | ~else: #false)
+    if brs.length() > 0 | (match brs[0] | '[$d, ...]': [d, ...]) | []
+  // parse a direction's tonart-source text into a list of art groups
+  fun parse_tonart(text):
+    def parsed = sh.#{parse-all}(rkt.#{open-input-string}(text))
+    match parsed
+    | '$g; ...': [g, ...]
+    | ~else: [parsed]
+  // graft `ref`'s lexical scopes onto a freshly parsed group, so the art
+  // names in it resolve where `ref` lives (art3's `datum->syntax stx`)
+  fun regraft(ref, g):
+    rkt.#{datum->syntax}(ref, rkt.#{syntax->datum}(g))
   // build an mxml_chord from a group of notes in source order (ns[0] is the
   // base note, carrying the canonical modifiers and coordinates)
   fun mxml_notes_to_chord(ns):
@@ -136,17 +154,66 @@ define_rewriter voice_at:
 // per-object conversions (mapping rewriters)
 // ---------------------------------------------------------------------
 
-// mxml_note p a o type ...  ->  note p a o     (keeping its coordinates)
+// mxml_note p a o type ...  ->  note p a o [dir ...]  (keeping coordinates)
 define_mapping_rewriter mxml_note_to_note over mxml_note:
   fun (stx, n):
     match n
     | 'mxml_note $p $a $o $_ ...':
-        [set_ctxt('note $p $a $o', get_ctxt(n))]
+        def dirs = note_dirs(n)
+        if dirs.length() > 0
+        | (block: let [d, ...] = dirs; [set_ctxt('note $p $a $o [$d, ...]', get_ctxt(n))])
+        | [set_ctxt('note $p $a $o', get_ctxt(n))]
 
 // mxml_rest ...  ->  music_rest
 define_mapping_rewriter mxml_rest_to_rest over mxml_rest:
   fun (stx, r):
     [set_ctxt('music_rest', get_ctxt(r))]
+
+// ---------------------------------------------------------------------
+// directions -- pulled off notes/rests into `direction` objects at the
+// note's instant, then interpreted as tonart source
+// ---------------------------------------------------------------------
+
+meta:
+  // the coordinates a detached direction should carry: the note's, minus
+  // its interval and id, so it sits at an instant instead of a span
+  fun direction_ctxt(n):
+    remove_from_ctxt(remove_from_ctxt(get_ctxt(n), #'interval), #'art_id)
+
+// note p a o [dir ...]  ->  note p a o  +  a `direction` per dir at the start
+define_mapping_rewriter detach_directions_from_note over note:
+  fun (stx, n):
+    match n
+    | 'note $p $a $o [$d, ...]':
+        def start = Syntax.make(expr_start(n) || 0)
+        def base_ctxt = direction_ctxt(n)
+        def dirs:
+          for List (dir in [d, ...]):
+            set_ctxt('at [instant $start]: direction $dir', base_ctxt)
+        [set_ctxt('note $p $a $o', get_ctxt(n))] ++ dirs
+    | ~else: [n]
+
+// music_rest [dir ...]  ->  music_rest  +  a `direction` per dir
+define_mapping_rewriter detach_directions_from_rest over music_rest:
+  fun (stx, r):
+    match r
+    | 'music_rest [$d, ...]':
+        def start = Syntax.make(expr_start(r) || 0)
+        def base_ctxt = direction_ctxt(r)
+        def dirs:
+          for List (dir in [d, ...]):
+            set_ctxt('at [instant $start]: direction $dir', base_ctxt)
+        [set_ctxt('music_rest', get_ctxt(r))] ++ dirs
+    | ~else: [r]
+
+// direction "text"  ->  the art the text parses to, at the direction's coords
+define_mapping_rewriter interpret_directions over direction:
+  fun (stx, dir):
+    match dir
+    | 'direction $text':
+        def ref = head_id_of(dir)      // resolves tonart names, hygienically
+        for values(acc = []) (g in parse_tonart(text.unwrap())):
+          acc ++ [set_ctxt(regraft(ref, g), get_ctxt(dir))]
 
 // extract_mxml_chords: walk the notes/rests in scope and group each run of
 // a base note followed by `chord`-marked notes into one mxml_chord, giving
@@ -178,21 +245,34 @@ define_rewriter extract_mxml_chords:
         | put_in_id_ctxt(mxml_notes_to_chord(g), ix)
     ['replace_full_context: $r ; ...']
 
-// mxml_chord [[p,a,o], ...] ...  ->  note_group [[p,a,o], ...]
+// mxml_chord [[p,a,o], ...] mods  ->  note_group [[p,a,o], ...] [dir...]
+// (carrying the base note's directions, if any, onto the group)
 define_mapping_rewriter mxml_chord_to_note_group over mxml_chord:
   fun (stx, c):
     match c
-    | 'mxml_chord [$p, ...] $_ ...':
-        [set_ctxt('note_group [$p, ...]', get_ctxt(c))]
+    | 'mxml_chord [$p, ...] $m ...':
+        def brs = [m, ...].filter(~keep: fun (x): match x | '[$_, ...]': #true | ~else: #false)
+        if brs.length() > 0
+        | (block: def db = brs[0]; [set_ctxt('note_group [$p, ...] $db', get_ctxt(c))])
+        | [set_ctxt('note_group [$p, ...]', get_ctxt(c))]
 
-// note_group [[p,a,o], ...]  ->  the notes, all at the group's coordinates
+// note_group [[p,a,o], ...] [dir...]  ->  the notes, all at the group's
+// coordinates; the first note carries the group's directions
 define_mapping_rewriter ungroup_notes over note_group:
   fun (stx, ng):
+    fun note_of(p, idx, dirs):
+      match p
+      | '[$pp, $aa, $oo]':
+          if idx == 0 && dirs.length() > 0
+          | (block: let [dd, ...] = dirs; set_ctxt('note $pp $aa $oo [$dd, ...]', get_ctxt(ng)))
+          | set_ctxt('note $pp $aa $oo', get_ctxt(ng))
     match ng
+    | 'note_group [$pitch, ...] [$d, ...]':
+        for values(acc = []) (p in [pitch, ...], idx in 0 ..):
+          acc ++ [note_of(p, idx, [d, ...])]
     | 'note_group [$pitch, ...]':
-        for values(acc = []) (p in [pitch, ...]):
-          match p
-          | '[$pp, $aa, $oo]': acc ++ [set_ctxt('note $pp $aa $oo', get_ctxt(ng))]
+        for values(acc = []) (p in [pitch, ...], idx in 0 ..):
+          acc ++ [note_of(p, idx, [])]
 
 // ---------------------------------------------------------------------
 // rewrite-inside helpers (map a block of rewriters into each container)
@@ -287,7 +367,10 @@ define_rewriter musicxml_to_tonart:
           ungroup_notes
         measure_to_music
      ',
-     'inline_music_seq']
+     'inline_music_seq',
+     'detach_directions_from_note',
+     'detach_directions_from_rest',
+     'interpret_directions']
 
 // ---------------------------------------------------------------------
 // load_musicxml "file" [voice ...]  -- read a MusicXML file and produce
@@ -301,18 +384,32 @@ meta:
   fun mx_num(n): Syntax.make(n)
   fun mx_ref(xs, i): rkt.#{list-ref}(xs, i)
   // one parsed note -> `at [duration d]: mxml_note p a o type` (or mxml_rest)
+  // the [dir, ...] bracket of tonart-source string literals, or #false
+  fun mx_dirs(n):
+    def ds = mx_ref(n, 7)
+    if rkt.#{null?}(ds)
+    | #false
+    | block:
+        let [d, ...] = for List (s in ds): Syntax.make(s)
+        '[$d, ...]'
   fun mx_build_note(n):
     def dur = mx_num(mx_ref(n, 5))
     def ty = mx_sym(mx_ref(n, 4) || "quarter")
+    def dirs = mx_dirs(n)
     if mx_ref(n, 0)                                       // rest?
-    | 'at [duration $dur]: mxml_rest $ty'
+    | (if dirs
+       | 'at [duration $dur]: mxml_rest $ty $dirs'
+       | 'at [duration $dur]: mxml_rest $ty')
     | block:
         def st = mx_sym(mx_ref(n, 1))
         def al = mx_num(mx_ref(n, 2))
         def oc = mx_num(mx_ref(n, 3))
-        if mx_ref(n, 6)                                   // chord?
-        | 'at [duration $dur]: mxml_note $st $al $oc $ty chord'
-        | 'at [duration $dur]: mxml_note $st $al $oc $ty'
+        def ch = mx_ref(n, 6)                             // chord?
+        cond
+        | ch && dirs: 'at [duration $dur]: mxml_note $st $al $oc $ty chord $dirs'
+        | ch: 'at [duration $dur]: mxml_note $st $al $oc $ty chord'
+        | dirs: 'at [duration $dur]: mxml_note $st $al $oc $ty $dirs'
+        | ~else: 'at [duration $dur]: mxml_note $st $al $oc $ty'
   // one parsed measure -> an mxml_measure form
   fun mx_build_measure(m):
     def divisions = mx_ref(m, 0)

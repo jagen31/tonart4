@@ -36,9 +36,16 @@
 (define (text x) (apply string-append (filter string? (kids x))))
 (define (num-of x) (and x (string->number (text x))))
 
+;; the tonart-source text of a <direction> (its <direction-type><words>)
+(define (direction-words d)
+  (let ([dt (find-first d 'direction-type)])
+    (and dt (let ([w (find-first dt 'words)]) (and w (text w))))))
+
 ;; --- one raw note (with a tie field, pre-merge) ---
-;; (list rest? step alter octave type duration chord? tie lyrics)
-(define (parse-note n)
+;; (list rest? step alter octave type duration chord? tie directions)
+;; `directions` are tonart-source strings: preceding <direction> words
+;; (verbatim) plus this note's lyrics wrapped as `lyric "syllable"`.
+(define (parse-note n pre-dirs)
   (define is-rest (and (find-first n 'rest) #t))
   (define pitch   (find-first n 'pitch))
   (define step    (and pitch (let ([s (find-first pitch 'step)])
@@ -54,8 +61,21 @@
                         [else (string->symbol (attr (car ties) 'type))]))
   (define lyrics  (for/list ([l (in-list (find-all n 'lyric))]
                              #:when (find-first l 'text))
-                    (text (find-first l 'text))))
-  (list is-rest step alter octave type dur chord? tie lyrics))
+                    (format "lyric ~s" (text (find-first l 'text)))))
+  (list is-rest step alter octave type dur chord? tie (append pre-dirs lyrics)))
+
+;; walk a measure's children in order, attaching preceding <direction>
+;; words to the note that follows them
+(define (parse-measure-notes m)
+  (let loop ([cs (kids m)] [dirs '()] [acc '()])
+    (cond
+      [(null? cs) (reverse acc)]
+      [(tag=? (car cs) 'direction)
+       (define w (direction-words (car cs)))
+       (loop (cdr cs) (if w (cons w dirs) dirs) acc)]
+      [(tag=? (car cs) 'note)
+       (loop (cdr cs) '() (cons (parse-note (car cs) (reverse dirs)) acc))]
+      [else (loop (cdr cs) dirs acc)])))
 
 ;; --- collapse tied groups (start -> continue* -> stop) into one note ---
 ;; Sequential (single-voice) merge: a tie start opens; continue folds in
@@ -105,7 +125,7 @@
           (and time-el
                (list (num-of (find-first time-el 'beats))
                      (num-of (find-first time-el 'beat-type)))))
-        (list divisions time-sig (map parse-note (find-all m 'note)))))
+        (list divisions time-sig (parse-measure-notes m))))
     ;; merge ties across this part, then reattach measure headers
     (define merged (merge-tied (map caddr raw)))
     (list pid
