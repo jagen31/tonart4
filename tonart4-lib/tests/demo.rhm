@@ -1,7 +1,9 @@
 #lang rhombus/and_meta
 import:
   "../main.rhm" open
-  lib("rsound/main.rkt") open   // for rs-frames / play
+  lib("rsound/main.rkt"):        // for rs-frames; tonart4 already gives us `play`
+    open
+    except: play
 
 // bare tones, one per beat
 def bells = realize music_rsound:
