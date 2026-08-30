@@ -1,0 +1,11 @@
+#lang rhombus/and_meta
+
+// Tonart 4 -- the public entry point.  Re-exports facade (the engine +
+// standard coordinates) and the tonart music library, so a client can
+// `import: tonart` and get everything.
+import:
+  facade
+  "private/lib.rhm"
+export:
+  all_from(.facade)
+  all_from(.lib)

@@ -1,0 +1,21 @@
+#lang rhombus/and_meta
+import:
+  "../main.rhm" open
+  lib("rsound/main.rkt") open   // for rs-frames / play
+
+// bare tones, one per beat
+def bells = realize music_rsound:
+              tones 440 660 880
+println("tones 440 660 880   -> " +& to_string(#{rs-frames}(bells)) +& " frames")
+
+// notes -> tones via the tuning, positioned by their intervals
+def arp = realize music_rsound:
+            tuning equal
+            at [interval 0 2]: volume 8
+            at [interval 0 1]: note c 0 4
+            at [interval 1 2]: note e 0 4
+            at [interval 2 3]: note g 0 5
+            note_to_tone
+println("C major arpeggio    -> " +& to_string(#{rs-frames}(arp)) +& " frames")
+
+// play(arp)   // uncomment to hear it

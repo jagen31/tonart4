@@ -1,0 +1,113 @@
+#lang rhombus/and_meta
+
+// =====================================================================
+// Tonart 4 -- the music instantiation of facade (Art 4), in Rhombus.
+//
+// For now: notes, tones, tuning, volume, note->tone, and a tone-only
+// rsound realizer.  Ported from tonart3's common-practice + electronic
+// libraries.
+// =====================================================================
+
+import:
+  facade open
+  lib("rsound/main.rkt") open
+  lib("rsound/envelope.rkt") open
+
+export:
+  note tone tuning volume
+  tones note_to_tone
+  music_rsound
+  play                       // re-exported from rsound, to play a result
+  meta: note_freq
+
+// ---------------------------------------------------------------------
+// objects
+// ---------------------------------------------------------------------
+
+define_object note       // note pitch accidental octave, e.g. `note c 0 4`
+define_object tone       // tone freq
+define_object tuning     // tuning kind (only `equal` / 12-TET for now)
+define_object volume     // volume n
+
+// ---------------------------------------------------------------------
+// note -> frequency (compile-time)
+// ---------------------------------------------------------------------
+
+meta:
+  fun pitch_semis(p):
+    match p
+    | #'c: 0
+    | #'d: 2
+    | #'e: 4
+    | #'f: 5
+    | #'g: 7
+    | #'a: 9
+    | #'b: 11
+    | ~else: 0
+  // base frequencies c4..b4, 12-tone equal temperament
+  def et12 = [261.626, 277.183, 293.665, 311.127, 329.628,
+              349.228, 369.994, 391.995, 415.305, 440.0, 466.164, 493.883]
+  fun tuning_scale(tun): et12   // only 12-TET for now
+  fun note_freq(n):
+    def p = args_of(n)[0].unwrap()
+    def a = args_of(n)[1].unwrap()
+    def o = args_of(n)[2].unwrap()
+    def scale = tuning_scale(context_ref(lookup_ctxt(), #'tuning))
+    scale[(pitch_semis(p) + a) mod 12] * math.expt(2.0, o - 4)
+
+// ---------------------------------------------------------------------
+// tones -- shorthand: `tones 440 660 880` lays out one tone per beat
+// ---------------------------------------------------------------------
+
+define_rewriter tones:
+  fun (expr):
+    for values(acc = []) (f in args_of(expr), i in 0 ..):
+      def s = Syntax.make(i)
+      def e = Syntax.make(i + 1)
+      def ix = Syntax.make(i)
+      acc ++ ['at [interval $s $e, index $ix]: tone $f']
+
+// ---------------------------------------------------------------------
+// note->tone -- convert notes in scope to tones, via the tuning
+// ---------------------------------------------------------------------
+
+define_rewriter note_to_tone:
+  fun (expr):
+    def notes = context_ref_within(current_ctxt(), get_ctxt(expr), #'note)
+    for values(acc = []) (n in notes):
+      def freq = Syntax.make(note_freq(n))
+      // the tone inherits the note's coordinates (but not its art-id)
+      def t = set_ctxt('tone $freq', remove_from_ctxt(get_ctxt(n), #'art_id))
+      acc ++ [t, delete_expr(n)]
+
+// ---------------------------------------------------------------------
+// the rsound realizer: overlay each tone, positioned by its interval
+// and scaled by the surrounding volume.  Returns runtime code that
+// builds (and hands back) an rsound.
+// ---------------------------------------------------------------------
+
+define_realizer music_rsound:
+  fun (ctxt):
+    def sr = 44100.0
+    def tones = context_ref_all(ctxt, #'tone)
+    // number literals need lexical context; borrow it from a tone
+    fun lit(v): Syntax.make(v, head_id_of(tones[0]))
+    def body = for values(acc = '#{silence}(1)') (t in tones):
+      def freq = lit(args_of(t)[0].unwrap())
+      def start = expr_start(t)
+      def end = expr_end(t)
+      def vs = context_ref_surrounding(ctxt, get_ctxt(t), #'volume)
+      def vol = if vs.length() > 0 | args_of(vs[0])[0].unwrap() | 1
+      def dur = lit(math.round((end - start) * sr))
+      def gain = lit(vol * 0.05)
+      def pos = math.round(start * sr)
+      def sound:
+        'block:
+           def d = $dur
+           #{rs-scale}(2, #{rs-mult}(#{hann-window}(d), #{make-tone}($freq, $gain, d)))'
+      def positioned:
+        if pos == 0
+        | sound
+        | '#{rs-append}(#{silence}($(lit(pos))), $sound)'
+      '#{rs-overlay}(#{rs-scale}(0.05, $positioned), $acc)'
+    '#{rs-scale}(4, $body)'
