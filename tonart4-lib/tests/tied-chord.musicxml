@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<score-partwise version="4.0">
+  <part-list><score-part id="P1"><part-name>Keys</part-name></score-part></part-list>
+  <part id="P1">
+    <measure number="1"><attributes><divisions>1</divisions></attributes>
+      <note><pitch><step>C</step><octave>4</octave></pitch><duration>4</duration><type>whole</type><tie type="start"/></note>
+      <note><chord/><pitch><step>E</step><octave>4</octave></pitch><duration>4</duration><type>whole</type><tie type="start"/></note>
+      <note><chord/><pitch><step>G</step><octave>4</octave></pitch><duration>4</duration><type>whole</type><tie type="start"/></note>
+    </measure>
+    <measure number="2">
+      <note><pitch><step>C</step><octave>4</octave></pitch><duration>4</duration><type>whole</type><tie type="stop"/></note>
+      <note><chord/><pitch><step>E</step><octave>4</octave></pitch><duration>4</duration><type>whole</type><tie type="stop"/></note>
+      <note><chord/><pitch><step>G</step><octave>4</octave></pitch><duration>4</duration><type>whole</type><tie type="stop"/></note>
+    </measure>
+  </part>
+</score-partwise>

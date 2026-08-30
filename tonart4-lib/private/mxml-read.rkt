@@ -78,31 +78,41 @@
       [else (loop (cdr cs) dirs acc)])))
 
 ;; --- collapse tied groups (start -> continue* -> stop) into one note ---
-;; Sequential (single-voice) merge: a tie start opens; continue folds in
-;; duration; stop finalizes the start note's duration.  Merged notes are
-;; dropped.  (Tied *chords* -- several ties open at one instant -- are not
-;; handled; that needs per-pitch tracking.)
+;; Per-pitch merge: ties are tracked in a table keyed by pitch (step alter
+;; octave), so several ties opening at one instant -- a tied *chord* -- are
+;; paired correctly instead of interleaving.  A tie start opens the pitch's
+;; slot (the start note's box, kept in the output); continue folds in
+;; duration; stop writes the summed duration back into the start note and
+;; drops itself.  Rests (no pitch) can't be tied.
+(define (note-pitch n)
+  (and (not (car n)) (list (list-ref n 1) (list-ref n 2) (list-ref n 3))))
 (define (merge-tied notes-per-measure)
   (define boxed (for/list ([m (in-list notes-per-measure)])
                   (for/list ([n (in-list m)]) (box n))))
   (define flat (apply append boxed))
   (define dropped (make-hasheq))
-  (let loop ([bs flat] [pending #f] [acc 0])
+  (define pending (make-hash))       ; pitch -> (cons start-box accumulated-dur)
+  (define (finish! b total)
+    (set-box! b (list-set (unbox b) 5 total)))
+  (for ([b (in-list flat)])
+    (define n (unbox b))
+    (define tie (list-ref n 7))
+    (define dur (or (list-ref n 5) 0))
+    (define key (note-pitch n))
+    (define open (and key (hash-ref pending key #f)))
     (cond
-      [(null? bs) (void)]
-      [else
-       (define b (car bs))
-       (define n (unbox b))
-       (define tie (list-ref n 7))
-       (define dur (or (list-ref n 5) 0))
-       (cond
-         [(eq? tie 'start) (loop (cdr bs) b dur)]
-         [(and pending (eq? tie 'continue))
-          (hash-set! dropped b #t) (loop (cdr bs) pending (+ acc dur))]
-         [(and pending (eq? tie 'stop))
-          (set-box! pending (list-set (unbox pending) 5 (+ acc dur)))
-          (hash-set! dropped b #t) (loop (cdr bs) #f 0)]
-         [else (loop (cdr bs) pending acc)])]))
+      [(and key (eq? tie 'start))
+       (hash-set! pending key (cons b dur))]
+      [(and open (eq? tie 'continue))
+       (hash-set! pending key (cons (car open) (+ (cdr open) dur)))
+       (hash-set! dropped b #t)]
+      [(and open (eq? tie 'stop))
+       (finish! (car open) (+ (cdr open) dur))
+       (hash-remove! pending key)
+       (hash-set! dropped b #t)]
+      [else (void)]))
+  ;; dangling starts (no matching stop): keep them with the summed duration
+  (for ([(key bd) (in-hash pending)]) (finish! (car bd) (cdr bd)))
   ;; regroup, dropping merged notes and the tie field
   (for/list ([m (in-list boxed)])
     (for/list ([b (in-list m)] #:unless (hash-ref dropped b #f))

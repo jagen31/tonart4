@@ -213,7 +213,13 @@ define_mapping_rewriter interpret_directions over direction:
     | 'direction $text':
         def ref = head_id_of(dir)      // resolves tonart names, hygienically
         for values(acc = []) (g in parse_tonart(text.unwrap())):
-          acc ++ [set_ctxt(regraft(ref, g), get_ctxt(dir))]
+          def grafted = regraft(ref, g)
+          def h = head_id_of(grafted)
+          // interpret only if it names a known art form; otherwise leave
+          // the direction untouched (e.g. tonart3-syntax directions)
+          if h && kind_of(h)
+          | acc ++ [set_ctxt(grafted, get_ctxt(dir))]
+          | acc ++ [dir]
 
 // extract_mxml_chords: walk the notes/rests in scope and group each run of
 // a base note followed by `chord`-marked notes into one mxml_chord, giving

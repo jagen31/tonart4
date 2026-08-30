@@ -61,3 +61,10 @@ println("loaded from sample.musicxml:")
 realize show:
   load_musicxml "sample.musicxml" [melody]
   musicxml_to_tonart
+
+// a C-E-G chord tied across a barline -> three notes, each held [0,8]
+println("")
+println("tied chord (per-pitch merge):")
+realize show:
+  load_musicxml "tied-chord.musicxml" [keys]
+  musicxml_to_tonart
