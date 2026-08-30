@@ -26,11 +26,12 @@ export:
   duration tie voice
   mxml_note mxml_rest music_rest time_sig divisions
   music measure mxml_measure voice_at
-  mxml_chord note_group direction lyric
+  mxml_chord note_group direction lyric set reset
   // rewriters
   mxml_note_to_note mxml_rest_to_rest
   extract_mxml_chords mxml_chord_to_note_group ungroup_notes
   detach_directions_from_note detach_directions_from_rest interpret_directions
+  do_set
   mxml_measure_to_measure rewrite_in_measure rewrite_in_mxml_measure
   durations_to_intervals measure_to_music inline_music_seq
   musicxml_to_tonart
@@ -87,6 +88,8 @@ define_object time_sig       // time_sig n d
 define_object divisions      // divisions n
 define_object direction      // direction "tonart-source"  (before interpreting)
 define_object lyric          // lyric "syllable"
+define_object set            // set <form>   -- hold a form from an instant
+define_object reset          // reset        -- ends the nearest open `set`
 
 meta:
   // the extra terms of an mxml_note, after `p a o type`
@@ -99,12 +102,16 @@ meta:
   fun note_dirs(e):
     def brs = note_extras(e).filter(~keep: fun (x): match x | '[$_, ...]': #true | ~else: #false)
     if brs.length() > 0 | (match brs[0] | '[$d, ...]': [d, ...]) | []
-  // parse a direction's tonart-source text into a list of art groups
+  // strip one layer of parentheses: `(x)` -> `x` (tonart3 wrote directions
+  // and `set` bodies as parenthesized s-expressions)
+  fun unwrap_parens(g):
+    match g | '($inner)': '$inner' | ~else: g
+  // parse a direction's tonart-source text into a list of art groups,
+  // unwrapping each group's outer parens
   fun parse_tonart(text):
     def parsed = sh.#{parse-all}(rkt.#{open-input-string}(text))
-    match parsed
-    | '$g; ...': [g, ...]
-    | ~else: [parsed]
+    def gs = match parsed | '$g; ...': [g, ...] | ~else: [parsed]
+    gs.map(unwrap_parens)
   // graft `ref`'s lexical scopes onto a freshly parsed group, so the art
   // names in it resolve where `ref` lives (art3's `datum->syntax stx`)
   fun regraft(ref, g):
@@ -220,6 +227,50 @@ define_mapping_rewriter interpret_directions over direction:
           if h && kind_of(h)
           | acc ++ [set_ctxt(grafted, get_ctxt(dir))]
           | acc ++ [dir]
+
+// ---------------------------------------------------------------------
+// set / reset / do_set  (ported from art3's timeline lib)
+//   set <form>   at an instant holds <form> from that instant until the
+//   nearest following reset (or the end of the surrounding music).
+//   do_set turns each `set` into that interval-spanning form.
+// ---------------------------------------------------------------------
+
+meta:
+  // the form a `set` holds: `set (name theme)` or `set: name theme`
+  fun set_inner(s):
+    match s
+    | 'set ($inner)': '$inner'
+    | 'set: $g; ...': '$g; ...'
+    | 'set $inner': '$inner'
+    | ~else: s
+  // the nearest reset instant strictly after `start`, or #false
+  fun nearest_reset(start, resets):
+    def afters:
+      for values(acc = []) (r in resets):
+        def t = expr_instant(r)
+        if t && t > start | acc ++ [t] | acc
+    if afters.length() > 0 | afters.sort(fun (a, b): a < b)[0] | #false
+  // the greatest interval end among the notes in scope (the piece's end)
+  fun piece_end(ctxt):
+    for values(mx = 0) (n in ctxt):
+      def e = expr_end(n)
+      if e && e > mx | e | mx
+
+define_rewriter do_set:
+  fun (expr):
+    def sets = context_ref_within(current_ctxt(), get_ctxt(expr), #'set)
+    def resets = context_ref_within(current_ctxt(), get_ctxt(expr), #'reset)
+    def the_end = expr_end(expr) || piece_end(current_ctxt())
+    for values(acc = []) (s in sets):
+      def start = expr_instant(s) || 0
+      def stop = nearest_reset(start, resets) || the_end
+      def s0 = Syntax.make(start)
+      def e0 = Syntax.make(stop)
+      def inner = set_inner(s)
+      // the set's coordinates, minus its instant (it becomes a span now)
+      def base_ctxt = remove_from_ctxt(get_ctxt(s), #'instant)
+      acc ++ [delete_expr(s),
+              set_ctxt('at [interval $s0 $e0]: $inner', base_ctxt)]
 
 // extract_mxml_chords: walk the notes/rests in scope and group each run of
 // a base note followed by `chord`-marked notes into one mxml_chord, giving
@@ -375,8 +426,9 @@ define_rewriter musicxml_to_tonart:
      ',
      'inline_music_seq',
      'detach_directions_from_note',
-     'detach_directions_from_rest',
-     'interpret_directions']
+     'detach_directions_from_rest']
+     // like tonart3, musicxml_to_tonart stops at detached `direction`s;
+     // follow with `interpret_directions` (and then `do_set`) to fire them
 
 // ---------------------------------------------------------------------
 // load_musicxml "file" [voice ...]  -- read a MusicXML file and produce

@@ -61,6 +61,7 @@ println("loaded from sample.musicxml:")
 realize show:
   load_musicxml "sample.musicxml" [melody]
   musicxml_to_tonart
+  interpret_directions      // fire the lyrics (detached as directions)
 
 // a C-E-G chord tied across a barline -> three notes, each held [0,8]
 println("")
@@ -68,3 +69,20 @@ println("tied chord (per-pitch merge):")
 realize show:
   load_musicxml "tied-chord.musicxml" [keys]
   musicxml_to_tonart
+
+// set / do_set: a direction `set (name theme)` (as it arrives from a score's
+// staff text) becomes a `name theme` region from its instant to the end
+define_realizer show_names:
+  fun (ctxt):
+    for (nm in context_ref_all(ctxt, #'name)):
+      println("  region name=" +& to_string(args_of(nm).map(fun (a): a.unwrap()))
+                +& " over " +& to_string(expr_interval(nm)))
+    '#void'
+println("")
+println("set/do_set named region:")
+realize show_names:
+  at [interval 0 8]: note c 0 4
+  at [instant 0]:
+    direction "(set (name theme))"
+  interpret_directions
+  do_set

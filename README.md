@@ -60,13 +60,30 @@ def snd = realize music_rsound:
 play(snd)
 ```
 
-Handles chords (`<chord/>` → simultaneous notes), ties (merged across
-barlines), and directions: a note's `<lyric>` text and any preceding
-`<direction>` words are treated as **tonart source** — `interpret_directions`
-parses them and splices in the resulting art (e.g. `lyric "do"`) at the
-note's instant. The XML file parsing lives in `private/mxml-read.rkt`
-(Racket, using Racket's `xml`); the art forms and the rewriter chain are
-in `musicxml.rhm`.
+Handles chords (`<chord/>` → simultaneous notes) and ties (merged
+per-pitch, so tied chords work), and directions: a note's `<lyric>` text
+and any preceding `<direction>` words are treated as **tonart source**.
+Following tonart3, `musicxml_to_tonart` detaches them as `direction`
+objects; then `interpret_directions` parses each one and splices in the
+resulting art (`lyric "do"`, or a `set`), and `do_set` turns a
+`set (name theme)` at an instant into a `name theme` region running to
+the next `reset` (or the end):
+
+```
+realize music_rsound:
+  tuning equal
+  load_musicxml "scores/dance2.musicxml" [flute1, flute2, flute3, flute4]
+  musicxml_to_tonart
+  interpret_directions
+  do_set
+  note_to_tone
+```
+
+Direction/`set` text may be written as tonart4 shrubbery or as tonart3
+parenthesized s-expressions (`(set (name theme))`) — the outer parens are
+stripped. The XML file parsing lives in `private/mxml-read.rkt` (Racket,
+using Racket's `xml`); the art forms and the rewriter chain are in
+`musicxml.rhm`.
 
 ## Layout
 
