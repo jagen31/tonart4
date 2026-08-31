@@ -56,10 +56,9 @@ meta:
   // basic durations, in sixteenth-note units, longest first
   def basic_durs = [[16, "1"], [12, "2."], [8, "2"], [6, "4."],
                     [4, "4"], [3, "8."], [2, "8"], [1, "16"]]
-  // a duration in quarter notes -> list of lilypond duration strings
+  // a whole number of sixteenths -> list of lilypond duration strings
   // (tied together when it isn't a single (dotted) value)
-  fun duration_to_lily(dur):
-    def units = math.round(dur * 4)     // sixteenths
+  fun units_to_lily(units):
     fun loop(remaining, acc):
       cond
       | remaining <= 0: acc
@@ -71,16 +70,33 @@ meta:
           | loop(remaining - m[0], acc ++ [m[1]])
           | acc ++ ["16"]                // fallback, avoid looping
     loop(units, [])
+  // a duration in quarter notes -> lilypond duration strings
+  fun duration_to_lily(dur): units_to_lily(math.round(dur * 4))
+  // bar-aware: split `dur` (quarters) starting at absolute `start`
+  // (quarters) so no piece crosses a barline of length `bar_len`
+  fun duration_to_lily_bar(dur, start, bar_len):
+    def bar = math.round(bar_len * 4)
+    def bar_pos = math.round(start * 4) mod bar
+    fun loop(remaining, pos, acc):
+      cond
+      | remaining <= 0: acc
+      | ~else:
+          def to_end = bar - pos
+          def chunk = if remaining < to_end | remaining | to_end
+          loop(remaining - chunk, 0, acc ++ units_to_lily(chunk))
+    loop(math.round(dur * 4), bar_pos, [])
 
 // ---------------------------------------------------------------------
 // the realizer: notes/rests in scope -> a LilyPond document (string)
 // ---------------------------------------------------------------------
 
 meta:
-  // one note/rest -> a lilypond token like `c'4` or `c'2~ c'8` or `r4`
-  fun note_token(e):
-    def dur = (expr_end(e) || 0) - (expr_start(e) || 0)
-    def durs = duration_to_lily(dur)
+  // one note/rest -> a lilypond token like `c'4` or `c'2~ c'8` or `r4`,
+  // split at barlines of length `bar_len` (quarters)
+  fun note_token(e, bar_len):
+    def start = expr_start(e) || 0
+    def dur = (expr_end(e) || 0) - start
+    def durs = duration_to_lily_bar(dur, start, bar_len)
     def head:
       match e
       | 'note $p $a $o $_ ...': pitch_to_lily(p.unwrap(), a.unwrap(), o.unwrap())
@@ -90,29 +106,49 @@ meta:
       if i == 0 | head +& d | acc +& "~ " +& head +& d
 
   // a list of note/rest forms -> the staff body, ordered by start
-  fun notes_to_lilypond(events):
+  fun notes_to_lilypond(events, bar_len = 4):
     def ordered = events.sort(fun (a, b): (expr_start(a) || 0) < (expr_start(b) || 0))
     for values(acc = "") (e in ordered, i in 0 ..):
-      if i == 0 | note_token(e) | acc +& " " +& note_token(e)
+      if i == 0 | note_token(e, bar_len) | acc +& " " +& note_token(e, bar_len)
   // the voice id-path of a form (a list of symbols), or []
   fun expr_voice(e):
     def c = context_ref(get_ctxt(e), #'voice)
     if c | args_of(c).map(fun (a): a.unwrap()) | []
+  // the octave of a note form, or #false
+  fun expr_octave(e):
+    match e | 'note $_ $_ $o $_ ...': o.unwrap() | ~else: #false
+  // pick a clef from the notes' average register (bass below middle C)
+  fun clef_for(events):
+    def octs = events.map(expr_octave).filter(~keep: fun (o): o)
+    cond
+    | octs.length() == 0: "treble"
+    | ~else:
+        def avg = (for values(s = 0) (o in octs): s + o) / octs.length()
+        if avg < 3.5 | "bass" | "treble"
   // the distinct voices among `events`, in first-appearance order
   fun voices_of(events):
     for values(acc = []) (e in events):
       def v = expr_voice(e)
       if acc.filter(~keep: fun (x): x == v).length() > 0 | acc | acc ++ [v]
   // one `\new Staff { ... }` per voice among `events` (single staff when
-  // unvoiced)
-  fun notes_to_staves(events):
+  // unvoiced), each with a register-appropriate clef
+  fun notes_to_staves(events, bar_len = 4):
     for values(acc = "") (v in voices_of(events)):
-      def body = notes_to_lilypond(events.filter(~keep: fun (e): expr_voice(e) == v))
-      acc +& "    \\new Staff { \\clef treble " +& body +& " }\n"
+      def vnotes = events.filter(~keep: fun (e): expr_voice(e) == v)
+      acc +& "    \\new Staff { \\clef " +& clef_for(vnotes) +& " "
+        +& notes_to_lilypond(vnotes, bar_len) +& " }\n"
+  // the bar length (in quarters) from a `time_sig n d` in scope, else 4
+  fun bar_length(ctxt):
+    def ts = context_ref(ctxt, #'time_sig)
+    if ts
+    | (block: def n = args_of(ts)[0].unwrap(); def d = args_of(ts)[1].unwrap(); n * 4 / d)
+    | 4
   fun ly_staves(ctxt):
-    notes_to_staves(context_ref_all(ctxt, #'note) ++ context_ref_all(ctxt, #'music_rest))
+    notes_to_staves(context_ref_all(ctxt, #'note) ++ context_ref_all(ctxt, #'music_rest),
+                    bar_length(ctxt))
   fun ly_body(ctxt):
-    notes_to_lilypond(context_ref_all(ctxt, #'note) ++ context_ref_all(ctxt, #'music_rest))
+    notes_to_lilypond(context_ref_all(ctxt, #'note) ++ context_ref_all(ctxt, #'music_rest),
+                      bar_length(ctxt))
   // a complete LilyPond document wrapping already-built staff text
   fun ly_document_staves(staves):
     "\\version \"2.24.0\"\n\\score {\n  <<\n" +& staves +& "  >>\n  \\layout { }\n}\n"
