@@ -1,0 +1,136 @@
+#lang rhombus/and_meta
+
+// =====================================================================
+// tonart4 -- the LilyPond realizer.
+//
+// `music_lilypond` turns the notes in scope (positioned on the interval
+// timeline) into LilyPond source; `lilypond_png` / `lilypond_svg` run the
+// `lilypond` CLI to engrave that source to an image file.
+//
+// A focused port of the compositions' lilypond realizer: single staff,
+// notes + rests, pitches and (tie-split) durations.  Interval lengths are
+// read as quarter-note beats.  Multi-voice staves, chords-as-one-token,
+// tuplets, and bar-aware splitting are not (yet) ported.
+// =====================================================================
+
+import:
+  facade open
+  "private/lib.rhm" open        // note (we read `note` / music_rest)
+  lib("racket/base.rkt") as rkt
+  lib("racket/system.rkt") as sys
+  meta:
+    lib("racket/base.rkt") as mrkt
+    lib("racket/system.rkt") as msys
+
+export:
+  music_lilypond
+  lilypond_png lilypond_svg
+  meta: pitch_to_lily duration_to_lily notes_to_lilypond ly_document engrave
+
+// ---------------------------------------------------------------------
+// pitch + duration -> lilypond (compile-time helpers)
+// ---------------------------------------------------------------------
+
+meta:
+  fun repeat_str(s, n):
+    for values(acc = "") (_ in 0 .. n): acc +& s
+  // tonart octave 4 = middle C = lilypond c'
+  fun pitch_to_lily(p, a, o):
+    def base = to_string(p)
+    def acc:
+      match a
+      | 1: "is"
+      | -1: "es"
+      | 2: "isis"
+      | -2: "eses"
+      | ~else: ""
+    def oct:
+      cond
+      | o >= 4: repeat_str("'", o - 3)
+      | o < 3: repeat_str(",", 3 - o)
+      | ~else: ""
+    base +& acc +& oct
+
+  // basic durations, in sixteenth-note units, longest first
+  def basic_durs = [[16, "1"], [12, "2."], [8, "2"], [6, "4."],
+                    [4, "4"], [3, "8."], [2, "8"], [1, "16"]]
+  // a duration in quarter notes -> list of lilypond duration strings
+  // (tied together when it isn't a single (dotted) value)
+  fun duration_to_lily(dur):
+    def units = math.round(dur * 4)     // sixteenths
+    fun loop(remaining, acc):
+      cond
+      | remaining <= 0: acc
+      | ~else:
+          def m:
+            for values(found = #false) (d in basic_durs):
+              if !found && d[0] <= remaining | d | found
+          if m
+          | loop(remaining - m[0], acc ++ [m[1]])
+          | acc ++ ["16"]                // fallback, avoid looping
+    loop(units, [])
+
+// ---------------------------------------------------------------------
+// the realizer: notes/rests in scope -> a LilyPond document (string)
+// ---------------------------------------------------------------------
+
+meta:
+  // one note/rest -> a lilypond token like `c'4` or `c'2~ c'8` or `r4`
+  fun note_token(e):
+    def dur = (expr_end(e) || 0) - (expr_start(e) || 0)
+    def durs = duration_to_lily(dur)
+    def head:
+      match e
+      | 'note $p $a $o $_ ...': pitch_to_lily(p.unwrap(), a.unwrap(), o.unwrap())
+      | ~else: "r"                       // music_rest (or anything else)
+    // tie the pieces: pitch+dur1 ~ pitch+dur2 ...
+    for values(acc = "") (d in durs, i in 0 ..):
+      if i == 0 | head +& d | acc +& "~ " +& head +& d
+
+  // a list of note/rest forms -> the staff body, ordered by start
+  fun notes_to_lilypond(events):
+    def ordered = events.sort(fun (a, b): (expr_start(a) || 0) < (expr_start(b) || 0))
+    for values(acc = "") (e in ordered, i in 0 ..):
+      if i == 0 | note_token(e) | acc +& " " +& note_token(e)
+  fun ly_body(ctxt):
+    notes_to_lilypond(context_ref_all(ctxt, #'note) ++ context_ref_all(ctxt, #'music_rest))
+  // wrap a staff body in a complete LilyPond document
+  fun ly_document(body):
+    "\\version \"2.24.0\"\n"
+      +& "\\score {\n  \\new Staff { \\clef treble " +& body +& " }\n"
+      +& "  \\layout { }\n}\n"
+  // engrave LilyPond `source` to `dir/name.fmt` at compile time; returns
+  // that path (fmt = "png" or "svg")
+  fun engrave(source, dir, name, fmt):
+    def ly_path = dir +& "/" +& name +& ".ly"
+    def f = mrkt.#{open-output-file}(ly_path, ~exists: #'replace)
+    mrkt.#{write-string}(source, f)
+    mrkt.#{close-output-port}(f)
+    msys.#{system}("lilypond --" +& fmt +& " -dresolution=200 -o "
+                     +& dir +& "/" +& name +& " " +& ly_path)
+    dir +& "/" +& name +& "." +& fmt
+
+define_realizer music_lilypond:
+  fun (ctxt): ly_document(ly_body(ctxt))
+
+// ---------------------------------------------------------------------
+// running lilypond (runtime)
+// ---------------------------------------------------------------------
+
+// realize `prog`-produced source to a file `name.ly` in `dir`, then run
+// lilypond to engrave it; returns the produced image path.  `fmt` is
+// "png" or "svg".
+fun lilypond_render(source, dir, name, fmt):
+  def ly_path = dir +& "/" +& name +& ".ly"
+  def out = dir +& "/" +& name
+  def f = rkt.#{open-output-file}(ly_path, ~exists: #'replace)
+  rkt.#{write-string}(source, f)
+  rkt.#{close-output-port}(f)
+  def ok = sys.#{system}("lilypond --" +& fmt +& " -dresolution=200 -o "
+                           +& out +& " " +& ly_path)
+  out +& "." +& fmt
+fun lilypond_png(source, dir, name): lilypond_render(source, dir, name, "png")
+fun lilypond_svg(source, dir, name): lilypond_render(source, dir, name, "svg")
+// the lilypond source string for the notes -- convenience alias so a
+// caller can name the realizer result plainly
+fun lilypond_source(s): s

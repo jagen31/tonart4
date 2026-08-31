@@ -85,6 +85,26 @@ stripped. The XML file parsing lives in `private/mxml-read.rkt` (Racket,
 using Racket's `xml`); the art forms and the rewriter chain are in
 `musicxml.rhm`.
 
+## Engraving (LilyPond)
+
+`tonart4/lilypond.rhm` adds a LilyPond realizer. `music_lilypond` turns the
+notes in scope into LilyPond source; `lilypond_png` / `lilypond_svg` run the
+`lilypond` CLI to engrave it to an image:
+
+```
+import:
+  tonart4 open
+  lib("tonart4/lilypond.rhm") open
+
+def src = realize music_lilypond:
+            load_musicxml "sample.musicxml" [melody]
+            musicxml_to_tonart
+def png = lilypond_png(src, "/tmp", "sample")   // needs lilypond installed
+```
+
+Single staff, notes + rests, pitches and (tie-split) durations; interval
+lengths are read as quarter-note beats.
+
 ## Layout
 
 - `tonart4-lib/` — the library (collection `tonart4`)

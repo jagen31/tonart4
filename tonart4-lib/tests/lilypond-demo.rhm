@@ -1,0 +1,21 @@
+#lang rhombus/and_meta
+
+// The LilyPond realizer: tonart notes -> LilyPond source.  (Engraving to
+// an image needs the `lilypond` CLI; see lilypond_png / lilypond_svg.)
+
+import:
+  lib("tonart4/main.rhm") open
+  lib("tonart4/lilypond.rhm") open
+
+def src = realize music_lilypond:
+            at [interval 0 1]: note c 0 4     // c'4
+            at [interval 1 2]: note d 0 4     // d'4
+            at [interval 2 4]: note e 0 4     // e'2
+            at [interval 4 5]: note f 1 4     // fis'4
+            at [interval 5 7]: note g 0 5     // g''2
+println("LilyPond source:")
+println(src)
+
+// engrave it, if lilypond is installed:
+//   import lib("racket/file.rkt") for a temp dir, then
+//   def png = lilypond_png(src, "/tmp", "scale")
