@@ -124,19 +124,34 @@ meta:
     "^\\markup { \\override #'(background-color . #f) \\with-dimensions #'(-2 . 2) #'(0 . 6) \\center-align "
       +& cmd +& " #Y #6 #\"" +& path +& "\" }"
 
-  // a list of note/rest forms -> the staff body, ordered by start; each
-  // `image` in `imgs` is hung above the note sounding at its start
-  fun notes_to_lilypond(events, bar_len = 4, imgs = []):
+  // a list of note/rest forms -> the staff body, ordered by start
+  fun notes_to_lilypond(events, bar_len = 4):
     def ordered = events.sort(fun (a, b): (expr_start(a) || 0) < (expr_start(b) || 0))
-    def n = ordered.length()
     for values(acc = "") (e in ordered, i in 0 ..):
-      def s = expr_start(e) || 0
-      def nxt = if i + 1 < n | (expr_start(ordered[i + 1]) || 0) | 100000000
-      def here = imgs.filter(~keep: fun (im): (expr_start(im) || 0) >= s && (expr_start(im) || 0) < nxt)
-      def marks:
-        for values(m = "") (im in here): m +& image_markup(expr_image(im))
-      def tok = note_token(e, bar_len) +& marks
-      if i == 0 | tok | acc +& " " +& tok
+      if i == 0 | note_token(e, bar_len) | acc +& " " +& note_token(e, bar_len)
+
+  // invisible spacer skips spanning `dur` quarters, the first carrying
+  // `mark` (so a markup lands exactly at the skip's start)
+  fun skip_tokens(dur, mark):
+    for values(acc = "") (d in duration_to_lily(dur), i in 0 ..):
+      def tok = "s" +& d +& (if i == 0 | mark | "")
+      if acc == "" | tok | acc +& " " +& tok
+  // a parallel voice of skips that places each image at its exact beat:
+  // a markup-less lead-in to the first image, then one skip per image
+  // running to the next image's start (art3's "dance voice")
+  fun image_skip_voice(imgs, voice_end):
+    def sorted = imgs.sort(fun (a, b): (expr_start(a) || 0) < (expr_start(b) || 0))
+    def n = sorted.length()
+    def t0 = expr_start(sorted[0]) || 0
+    def lead = if t0 > 0 | skip_tokens(t0, "") +& " " | ""
+    def rest:
+      for values(acc = "") (im in sorted, i in 0 ..):
+        def s = expr_start(im) || 0
+        def nxt = if i + 1 < n | (expr_start(sorted[i + 1]) || 0) | voice_end
+        def dur = if nxt > s | nxt - s | 1
+        def seg = skip_tokens(dur, image_markup(expr_image(im)))
+        if acc == "" | seg | acc +& " " +& seg
+    lead +& rest
   // the voice id-path of a form (a list of symbols), or []
   fun expr_voice(e):
     def c = context_ref(get_ctxt(e), #'voice)
@@ -160,11 +175,19 @@ meta:
   // one `\new Staff { ... }` per voice among `events` (single staff when
   // unvoiced), each with a register-appropriate clef
   fun notes_to_staves(events, bar_len = 4, imgs = []):
-    for values(acc = "") (v in voices_of(events)):
+    for values(acc = "") (v in voices_of(events ++ imgs)):
       def vnotes = events.filter(~keep: fun (e): expr_voice(e) == v)
       def vimgs = imgs.filter(~keep: fun (e): expr_voice(e) == v)
-      acc +& "    \\new Staff { \\clef " +& clef_for(vnotes) +& " "
-        +& notes_to_lilypond(vnotes, bar_len, vimgs) +& " }\n"
+      def notevoice = notes_to_lilypond(vnotes, bar_len)
+      // images ride a parallel skip voice so each lands on its own beat,
+      // rather than gluing onto whatever notehead happens to be near
+      def body:
+        if vimgs.length() > 0
+        | (block:
+             def vend = for values(mx = 0) (e in vnotes): def en = expr_end(e); if en && en > mx | en | mx
+             "<< { " +& notevoice +& " } { " +& image_skip_voice(vimgs, vend) +& " } >>")
+        | notevoice
+      acc +& "    \\new Staff { \\clef " +& clef_for(vnotes) +& " " +& body +& " }\n"
   // the bar length (in quarters) from a `time_sig n d` in scope, else 4
   fun bar_length(ctxt):
     def ts = context_ref(ctxt, #'time_sig)
