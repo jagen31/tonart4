@@ -1,0 +1,45 @@
+#lang rhombus/and_meta
+
+// dance2 -- "Back Home Again", from the ICFP/FARM presentation.  Four
+// flute parts with ties and one staff-text direction, `(set (name theme))`.
+// This runs dance2.rkt's exact chain in tonart4:
+//   load_musicxml -> musicxml_to_tonart -> interpret_directions -> do_set
+// and then realizes the result to audio.
+
+import:
+  lib("tonart4/main.rhm") open
+  lib("tonart4/musicxml.rhm") open
+  lib("rsound/main.rkt"):
+    open
+    except: play
+
+define_realizer report:
+  fun (ctxt):
+    def notes = context_ref_all(ctxt, #'note)
+    def mx:
+      for values(m = 0) (n in notes):
+        def e = expr_end(n)
+        if e && e > m | e | m
+    println("notes: " +& to_string(notes.length()) +& "  spanning [0, " +& to_string(mx) +& "]")
+    println("sets left: " +& to_string(context_ref_all(ctxt, #'set).length())
+              +& "  directions left: " +& to_string(context_ref_all(ctxt, #'direction).length()))
+    for (nm in context_ref_all(ctxt, #'name)):
+      println("named region: " +& to_string(args_of(nm).map(fun (a): a.unwrap()))
+                +& " over " +& to_string(expr_interval(nm)))
+    '#void'
+
+println("dance2 -- Back Home Again:")
+realize report:
+  load_musicxml "dance2.musicxml" [flute1, flute2, flute3, flute4]
+  musicxml_to_tonart
+  interpret_directions
+  do_set
+
+def snd = realize music_rsound:
+            tuning equal
+            load_musicxml "dance2.musicxml" [flute1, flute2, flute3, flute4]
+            musicxml_to_tonart
+            interpret_directions
+            do_set
+            note_to_tone
+println("realized to audio -> " +& to_string(#{rs-frames}(snd)) +& " frames")
