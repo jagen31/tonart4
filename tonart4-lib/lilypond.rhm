@@ -27,7 +27,7 @@ export:
   lilypond_png lilypond_svg
   meta:
     pitch_to_lily duration_to_lily notes_to_lilypond notes_to_staves
-    ly_document ly_document_staves expr_voice expr_image image_markup engrave
+    ly_document ly_document_staves expr_voice expr_image image_markup engrave engrave_cropped
 
 // an `image "path"` hangs a picture above the staff at its interval start,
 // in its voice (e.g. a danceart dancer rendered to a PNG)
@@ -217,6 +217,17 @@ meta:
     msys.#{system}("lilypond --" +& fmt +& " -dresolution=200 -o "
                      +& dir +& "/" +& name +& " " +& ly_path)
     dir +& "/" +& name +& "." +& fmt
+  // like `engrave`, but with `-dcrop` so the image is trimmed tight to the
+  // music (no page whitespace) -- for placing a score inside a slide/pict.
+  // Returns the `.cropped.<fmt>` path lilypond writes.
+  fun engrave_cropped(source, dir, name, fmt):
+    def ly_path = dir +& "/" +& name +& ".ly"
+    def f = mrkt.#{open-output-file}(ly_path, ~exists: #'replace)
+    mrkt.#{write-string}(source, f)
+    mrkt.#{close-output-port}(f)
+    msys.#{system}("lilypond --" +& fmt +& " -dcrop=#t -dresolution=200 -o "
+                     +& dir +& "/" +& name +& " " +& ly_path)
+    dir +& "/" +& name +& ".cropped." +& fmt
 
 define_realizer music_lilypond:
   fun (ctxt): ly_document_staves(ly_staves(ctxt))
