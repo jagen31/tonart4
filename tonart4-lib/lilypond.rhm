@@ -23,11 +23,15 @@ import:
     lib("racket/system.rkt") as msys
 
 export:
-  music_lilypond
+  music_lilypond image
   lilypond_png lilypond_svg
   meta:
     pitch_to_lily duration_to_lily notes_to_lilypond notes_to_staves
-    ly_document ly_document_staves expr_voice engrave
+    ly_document ly_document_staves expr_voice expr_image image_markup engrave
+
+// an `image "path"` hangs a picture above the staff at its interval start,
+// in its voice (e.g. a danceart dancer rendered to a PNG)
+define_object image
 
 // ---------------------------------------------------------------------
 // pitch + duration -> lilypond (compile-time helpers)
@@ -105,11 +109,34 @@ meta:
     for values(acc = "") (d in durs, i in 0 ..):
       if i == 0 | head +& d | acc +& "~ " +& head +& d
 
-  // a list of note/rest forms -> the staff body, ordered by start
-  fun notes_to_lilypond(events, bar_len = 4):
+  // the "path" of an `image` form
+  fun expr_image(e):
+    match e | 'image $p': p.unwrap() | ~else: ""
+  // does `path` end with `suffix`?
+  fun ends_with(path, suffix):
+    def pl = path.length()
+    def sl = suffix.length()
+    pl >= sl && path.substring(pl - sl, pl) == suffix
+  // lilypond markup that hangs `path` above the note it is attached to;
+  // \epsfile for EPS (transparent, correct colours), \image for PNG
+  fun image_markup(path):
+    def cmd = if ends_with(path, ".eps") | "\\epsfile" | "\\image"
+    "^\\markup { \\override #'(background-color . #f) \\with-dimensions #'(-2 . 2) #'(0 . 6) \\center-align "
+      +& cmd +& " #Y #6 #\"" +& path +& "\" }"
+
+  // a list of note/rest forms -> the staff body, ordered by start; each
+  // `image` in `imgs` is hung above the note sounding at its start
+  fun notes_to_lilypond(events, bar_len = 4, imgs = []):
     def ordered = events.sort(fun (a, b): (expr_start(a) || 0) < (expr_start(b) || 0))
+    def n = ordered.length()
     for values(acc = "") (e in ordered, i in 0 ..):
-      if i == 0 | note_token(e, bar_len) | acc +& " " +& note_token(e, bar_len)
+      def s = expr_start(e) || 0
+      def nxt = if i + 1 < n | (expr_start(ordered[i + 1]) || 0) | 100000000
+      def here = imgs.filter(~keep: fun (im): (expr_start(im) || 0) >= s && (expr_start(im) || 0) < nxt)
+      def marks:
+        for values(m = "") (im in here): m +& image_markup(expr_image(im))
+      def tok = note_token(e, bar_len) +& marks
+      if i == 0 | tok | acc +& " " +& tok
   // the voice id-path of a form (a list of symbols), or []
   fun expr_voice(e):
     def c = context_ref(get_ctxt(e), #'voice)
@@ -132,11 +159,12 @@ meta:
       if acc.filter(~keep: fun (x): x == v).length() > 0 | acc | acc ++ [v]
   // one `\new Staff { ... }` per voice among `events` (single staff when
   // unvoiced), each with a register-appropriate clef
-  fun notes_to_staves(events, bar_len = 4):
+  fun notes_to_staves(events, bar_len = 4, imgs = []):
     for values(acc = "") (v in voices_of(events)):
       def vnotes = events.filter(~keep: fun (e): expr_voice(e) == v)
+      def vimgs = imgs.filter(~keep: fun (e): expr_voice(e) == v)
       acc +& "    \\new Staff { \\clef " +& clef_for(vnotes) +& " "
-        +& notes_to_lilypond(vnotes, bar_len) +& " }\n"
+        +& notes_to_lilypond(vnotes, bar_len, vimgs) +& " }\n"
   // the bar length (in quarters) from a `time_sig n d` in scope, else 4
   fun bar_length(ctxt):
     def ts = context_ref(ctxt, #'time_sig)
@@ -145,7 +173,8 @@ meta:
     | 4
   fun ly_staves(ctxt):
     notes_to_staves(context_ref_all(ctxt, #'note) ++ context_ref_all(ctxt, #'music_rest),
-                    bar_length(ctxt))
+                    bar_length(ctxt),
+                    context_ref_all(ctxt, #'image))
   fun ly_body(ctxt):
     notes_to_lilypond(context_ref_all(ctxt, #'note) ++ context_ref_all(ctxt, #'music_rest),
                       bar_length(ctxt))
