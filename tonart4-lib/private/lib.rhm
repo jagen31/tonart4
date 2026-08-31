@@ -15,11 +15,13 @@ import:
     except: play          // rsound's `play` is a top-level-only macro; we
                           // shadow it below with a plain function
   lib("rsound/envelope.rkt") open
+  meta:
+    lib("racket/base.rkt") as rkt   // inexact->exact, in the realizer
 
 export:
   note tone tuning volume
   tones note_to_tone
-  music_rsound
+  music_rsound rs_render
   play                       // a function (see below), unlike rsound's macro
   meta: note_freq
 
@@ -90,33 +92,48 @@ define_rewriter note_to_tone:
       acc ++ [t, delete_expr(n)]
 
 // ---------------------------------------------------------------------
-// the rsound realizer: overlay each tone, positioned by its interval
-// and scaled by the surrounding volume.  Returns runtime code that
-// builds (and hands back) an rsound.
+// the rsound realizer: turn each tone into a windowed sound and mix them
+// all, positioned by interval and scaled by surrounding volume.  Returns
+// runtime code that builds (and hands back) an rsound.
+//
+// Every tone becomes one `[sound, start-frame]` entry and rsound's
+// `assemble` sums them into a single buffer in one pass.  The old version
+// padded each tone with `silence` to its start and folded the lot with
+// nested `rs-overlay` -- O(n^2) in samples copied, and an n-deep syntax
+// tree that was itself slow to compile.  `assemble` is O(total samples),
+// and the emitted code is a flat list, so a whole program realizes fast.
 // ---------------------------------------------------------------------
+
+// synthesize + mix a batch of tone specs.  Each spec is
+// `[freq, gain, dur-frames, start-frame]`; every tone becomes a hann-
+// windowed sine and `assemble` sums them into one buffer in a single
+// pass.  Taking the specs as *data* keeps the realizer's emitted code
+// tiny (a flat list of numbers) no matter how many notes there are, so it
+// compiles fast; the synthesis work happens here at run time.
+fun rs_render(specs):
+  def entries = for List (s in specs):
+    PairList(#{rs-scale}(2, #{rs-mult}(#{hann-window}(s[2]), #{make-tone}(s[0], s[1], s[2]))), s[3])
+  #{rs-scale}(0.2, #{assemble}(PairList(& entries)))
 
 define_realizer music_rsound:
   fun (ctxt):
     def sr = 44100.0
     def tones = context_ref_all(ctxt, #'tone)
-    // number literals need lexical context; borrow it from a tone
-    fun lit(v): Syntax.make(v, head_id_of(tones[0]))
-    def body = for values(acc = '#{silence}(1)') (t in tones):
-      def freq = lit(args_of(t)[0].unwrap())
-      def start = expr_start(t)
-      def end = expr_end(t)
-      def vs = context_ref_surrounding(ctxt, get_ctxt(t), #'volume)
-      def vol = if vs.length() > 0 | args_of(vs[0])[0].unwrap() | 1
-      def dur = lit(math.round((end - start) * sr))
-      def gain = lit(vol * 0.05)
-      def pos = math.round(start * sr)
-      def sound:
-        'block:
-           def d = $dur
-           #{rs-scale}(2, #{rs-mult}(#{hann-window}(d), #{make-tone}($freq, $gain, d)))'
-      def positioned:
-        if pos == 0
-        | sound
-        | '#{rs-append}(#{silence}($(lit(pos))), $sound)'
-      '#{rs-overlay}(#{rs-scale}(0.05, $positioned), $acc)'
-    '#{rs-scale}(4, $body)'
+    cond
+    | tones.length() == 0: '#{silence}(1)'
+    | ~else:
+        // number literals need lexical context; borrow it from a tone
+        fun lit(v): Syntax.make(v, head_id_of(tones[0]))
+        // a whole number of frames (assemble wants exact-integer offsets)
+        fun frames(x): lit(rkt.#{inexact->exact}(math.round(x)))
+        // emit one `[freq, gain, dur, start]` spec per tone -- just numbers,
+        // so the generated program is small; `rs_render` synthesizes them
+        def specs = for List (t in tones):
+          def freq = lit(args_of(t)[0].unwrap())
+          def start = expr_start(t)
+          def end = expr_end(t)
+          def vs = context_ref_surrounding(ctxt, get_ctxt(t), #'volume)
+          def vol = if vs.length() > 0 | args_of(vs[0])[0].unwrap() | 1
+          '[$freq, $(lit(vol * 0.05)), $(frames((end - start) * sr)), $(frames(start * sr))]'
+        let [spec, ...] = specs
+        'rs_render([$spec, ...])'
