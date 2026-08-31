@@ -126,16 +126,20 @@
       (lambda (in) (xml->xexpr (document-element (read-xml in))))))
   (for/list ([part (in-list (find-all doc 'part))])
     (define pid (attr part 'id))
+    ;; divisions and time-sig are declared once and persist across later
+    ;; measures; carry the last-seen value forward
+    (define cur-div (box 1))
+    (define cur-ts  (box #f))
     (define raw
       (for/list ([m (in-list (find-all part 'measure))])
         (define attrs-el  (find-first m 'attributes))
-        (define divisions (and attrs-el (num-of (find-first attrs-el 'divisions))))
+        (define this-div  (and attrs-el (num-of (find-first attrs-el 'divisions))))
+        (when this-div (set-box! cur-div this-div))
         (define time-el   (and attrs-el (find-first attrs-el 'time)))
-        (define time-sig
-          (and time-el
-               (list (num-of (find-first time-el 'beats))
-                     (num-of (find-first time-el 'beat-type)))))
-        (list divisions time-sig (parse-measure-notes m))))
+        (when time-el
+          (set-box! cur-ts (list (num-of (find-first time-el 'beats))
+                                 (num-of (find-first time-el 'beat-type)))))
+        (list (unbox cur-div) (unbox cur-ts) (parse-measure-notes m))))
     ;; merge ties across this part, then reattach measure headers
     (define merged (merge-tied (map caddr raw)))
     (list pid

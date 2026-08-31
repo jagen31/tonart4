@@ -102,8 +102,9 @@ def src = realize music_lilypond:
 def png = lilypond_png(src, "/tmp", "sample")   // needs lilypond installed
 ```
 
-Single staff, notes + rests, pitches and (tie-split) durations; interval
-lengths are read as quarter-note beats.
+One staff per `voice`, notes + rests, pitches and (tie-split) durations.
+MusicXML `divisions` are normalized to quarter-note beats, so a loaded
+score engraves (and plays) with correct note values.
 
 ## Layout
 

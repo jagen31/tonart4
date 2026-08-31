@@ -25,7 +25,9 @@ import:
 export:
   music_lilypond
   lilypond_png lilypond_svg
-  meta: pitch_to_lily duration_to_lily notes_to_lilypond ly_document engrave
+  meta:
+    pitch_to_lily duration_to_lily notes_to_lilypond notes_to_staves
+    ly_document ly_document_staves expr_voice engrave
 
 // ---------------------------------------------------------------------
 // pitch + duration -> lilypond (compile-time helpers)
@@ -92,13 +94,31 @@ meta:
     def ordered = events.sort(fun (a, b): (expr_start(a) || 0) < (expr_start(b) || 0))
     for values(acc = "") (e in ordered, i in 0 ..):
       if i == 0 | note_token(e) | acc +& " " +& note_token(e)
+  // the voice id-path of a form (a list of symbols), or []
+  fun expr_voice(e):
+    def c = context_ref(get_ctxt(e), #'voice)
+    if c | args_of(c).map(fun (a): a.unwrap()) | []
+  // the distinct voices among `events`, in first-appearance order
+  fun voices_of(events):
+    for values(acc = []) (e in events):
+      def v = expr_voice(e)
+      if acc.filter(~keep: fun (x): x == v).length() > 0 | acc | acc ++ [v]
+  // one `\new Staff { ... }` per voice among `events` (single staff when
+  // unvoiced)
+  fun notes_to_staves(events):
+    for values(acc = "") (v in voices_of(events)):
+      def body = notes_to_lilypond(events.filter(~keep: fun (e): expr_voice(e) == v))
+      acc +& "    \\new Staff { \\clef treble " +& body +& " }\n"
+  fun ly_staves(ctxt):
+    notes_to_staves(context_ref_all(ctxt, #'note) ++ context_ref_all(ctxt, #'music_rest))
   fun ly_body(ctxt):
     notes_to_lilypond(context_ref_all(ctxt, #'note) ++ context_ref_all(ctxt, #'music_rest))
-  // wrap a staff body in a complete LilyPond document
+  // a complete LilyPond document wrapping already-built staff text
+  fun ly_document_staves(staves):
+    "\\version \"2.24.0\"\n\\score {\n  <<\n" +& staves +& "  >>\n  \\layout { }\n}\n"
+  // wrap a single staff body in a complete document
   fun ly_document(body):
-    "\\version \"2.24.0\"\n"
-      +& "\\score {\n  \\new Staff { \\clef treble " +& body +& " }\n"
-      +& "  \\layout { }\n}\n"
+    ly_document_staves("    \\new Staff { \\clef treble " +& body +& " }\n")
   // engrave LilyPond `source` to `dir/name.fmt` at compile time; returns
   // that path (fmt = "png" or "svg")
   fun engrave(source, dir, name, fmt):
@@ -111,7 +131,7 @@ meta:
     dir +& "/" +& name +& "." +& fmt
 
 define_realizer music_lilypond:
-  fun (ctxt): ly_document(ly_body(ctxt))
+  fun (ctxt): ly_document_staves(ly_staves(ctxt))
 
 // ---------------------------------------------------------------------
 // running lilypond (runtime)

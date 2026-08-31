@@ -363,11 +363,16 @@ define_mapping_rewriter mxml_measure_to_measure over mxml_measure:
 
 define_mapping_rewriter durations_to_intervals over seq:
   fun (stx, s):
+    // normalize raw musicxml durations to quarter-note beats using the
+    // measure's `divisions` (the number of duration units per quarter)
+    def div:
+      def d = context_ref(current_ctxt(), #'divisions)
+      if d | args_of(d)[0].unwrap() | 1
     def ordered:
       seq_items(s).sort(fun (a, b): (expr_single_index(a) || 0) < (expr_single_index(b) || 0))
     def t = Box(0)
     for values(acc = []) (e in ordered):
-      def dur = expr_duration(e) || 0
+      def dur = (expr_duration(e) || 0) / div
       def s0 = Syntax.make(t.value)
       def e0 = Syntax.make(t.value + dur)
       t.value := t.value + dur
@@ -398,15 +403,21 @@ define_mapping_rewriter inline_music_seq over seq:
     def init_start = expr_start(s) || 0
     def ordered:
       seq_items(s).sort(fun (a, b): (expr_single_index(a) || 0) < (expr_single_index(b) || 0))
+    // the seq's own coordinates (e.g. `voice`) to carry down onto the
+    // notes -- everything but the timeline/id coords this rewriter resets
+    def carry:
+      remove_from_ctxt(remove_from_ctxt(remove_from_ctxt(get_ctxt(s), #'interval), #'index), #'art_id)
     def t = Box(init_start)
     for values(acc = []) (mus in ordered):
       def len = music_end(mus)
       def s0 = Syntax.make(t.value)
       def e0 = Syntax.make(t.value + len)
       t.value := t.value + len
-      // place this music block on its own interval span
+      // place this music block on its own interval span, carrying the
+      // seq's voice (etc.) down onto its notes
       let [it, ...] = embed_items(mus).map(fun (e): remove_from_id_ctxt(e, #'index))
-      acc ++ [set_ctxt('at [interval $s0 $e0]: $it ; ...', get_ctxt(mus))]
+      def out_ctxt = merge_coordinates(carry, get_ctxt(mus), current_ctxt())
+      acc ++ [set_ctxt('at [interval $s0 $e0]: $it ; ...', out_ctxt)]
 
 // ---------------------------------------------------------------------
 // the whole musicxml -> tonart pipeline
