@@ -28,6 +28,7 @@ export:
   meta:
     pitch_to_lily duration_to_lily notes_to_lilypond notes_to_staves
     ly_document ly_document_staves expr_voice expr_image image_markup engrave engrave_cropped
+    time_sig_info
 
 // an `image "path"` hangs a picture above the staff at its interval start,
 // in its voice (e.g. a danceart dancer rendered to a PNG)
@@ -124,11 +125,38 @@ meta:
     "^\\markup { \\override #'(background-color . #f) \\with-dimensions #'(-2 . 2) #'(0 . 6) \\center-align "
       +& cmd +& " #Y #6 #\"" +& path +& "\" }"
 
-  // a list of note/rest forms -> the staff body, ordered by start
+  // is `e` a note (vs a rest)?
+  fun is_note(e): match e | 'note $_ ...': #true | ~else: #false
+  // the distinct start times among `events`, in ascending order
+  fun starts_of(events):
+    def ss:
+      for values(acc = []) (e in events):
+        def s = expr_start(e) || 0
+        if acc.filter(~keep: fun (x): x == s).length() > 0 | acc | acc ++ [s]
+    ss.sort(fun (a, b): a < b)
+  // several notes sharing a start (and duration) -> one lilypond chord
+  // `<c' e' g'>4`, split at barlines and tied like a single note
+  fun chord_token(notes, bar_len):
+    def start = expr_start(notes[0]) || 0
+    def dur = (expr_end(notes[0]) || 0) - start
+    def durs = duration_to_lily_bar(dur, start, bar_len)
+    def inside:
+      for values(acc = "") (n in notes, i in 0 ..):
+        def h:
+          match n | 'note $p $a $o $_ ...': pitch_to_lily(p.unwrap(), a.unwrap(), o.unwrap()) | ~else: ""
+        if i == 0 | h | acc +& " " +& h
+    def chord = "<" +& inside +& ">"
+    for values(acc = "") (d in durs, i in 0 ..):
+      if i == 0 | chord +& d | acc +& "~ " +& chord +& d
+
+  // a list of note/rest forms -> the staff body, ordered by start, with
+  // same-start notes emitted as a single chord
   fun notes_to_lilypond(events, bar_len = 4):
-    def ordered = events.sort(fun (a, b): (expr_start(a) || 0) < (expr_start(b) || 0))
-    for values(acc = "") (e in ordered, i in 0 ..):
-      if i == 0 | note_token(e, bar_len) | acc +& " " +& note_token(e, bar_len)
+    for values(acc = "") (s in starts_of(events), i in 0 ..):
+      def group = events.filter(~keep: fun (e): (expr_start(e) || 0) == s)
+      def notes = group.filter(~keep: is_note)
+      def tok = if notes.length() > 1 | chord_token(notes, bar_len) | note_token(group[0], bar_len)
+      if i == 0 | tok | acc +& " " +& tok
 
   // invisible spacer skips spanning `dur` quarters, the first carrying
   // `mark` (so a markup lands exactly at the skip's start)
@@ -174,7 +202,8 @@ meta:
       if acc.filter(~keep: fun (x): x == v).length() > 0 | acc | acc ++ [v]
   // one `\new Staff { ... }` per voice among `events` (single staff when
   // unvoiced), each with a register-appropriate clef
-  fun notes_to_staves(events, bar_len = 4, imgs = []):
+  fun notes_to_staves(events, bar_len = 4, imgs = [], time_str = #false):
+    def tprefix = if time_str | "\\time " +& time_str +& " " | ""
     for values(acc = "") (v in voices_of(events ++ imgs)):
       def vnotes = events.filter(~keep: fun (e): expr_voice(e) == v)
       def vimgs = imgs.filter(~keep: fun (e): expr_voice(e) == v)
@@ -187,13 +216,18 @@ meta:
              def vend = for values(mx = 0) (e in vnotes): def en = expr_end(e); if en && en > mx | en | mx
              "<< { " +& notevoice +& " } { " +& image_skip_voice(vimgs, vend) +& " } >>")
         | notevoice
-      acc +& "    \\new Staff { \\clef " +& clef_for(vnotes) +& " " +& body +& " }\n"
+      acc +& "    \\new Staff { \\clef " +& clef_for(vnotes) +& " " +& tprefix +& body +& " }\n"
+  // [bar-length-in-quarters, "n/d"] for a `time_sig n d` form, or [4, #false]
+  fun time_sig_info(ts):
+    if ts
+    | (block:
+         def n = args_of(ts)[0].unwrap()
+         def d = args_of(ts)[1].unwrap()
+         [n * 4 / d, to_string(n) +& "/" +& to_string(d)])
+    | [4, #false]
   // the bar length (in quarters) from a `time_sig n d` in scope, else 4
   fun bar_length(ctxt):
-    def ts = context_ref(ctxt, #'time_sig)
-    if ts
-    | (block: def n = args_of(ts)[0].unwrap(); def d = args_of(ts)[1].unwrap(); n * 4 / d)
-    | 4
+    time_sig_info(context_ref(ctxt, #'time_sig))[0]
   fun ly_staves(ctxt):
     notes_to_staves(context_ref_all(ctxt, #'note) ++ context_ref_all(ctxt, #'music_rest),
                     bar_length(ctxt),
