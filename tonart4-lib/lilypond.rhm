@@ -21,6 +21,7 @@ import:
   meta:
     lib("racket/base.rkt") as mrkt
     lib("racket/system.rkt") as msys
+    lib("tonart4/private/engrave-par.rkt") as mpar   // parallel engraving
 
 export:
   music_lilypond image
@@ -28,6 +29,7 @@ export:
   meta:
     pitch_to_lily duration_to_lily notes_to_lilypond notes_to_staves
     ly_document ly_document_staves expr_voice expr_image image_markup engrave engrave_cropped
+    engrave_cropped_all
     time_sig_info
 
 // an `image "path"` hangs a picture above the staff at its interval start,
@@ -262,6 +264,11 @@ meta:
     msys.#{system}("lilypond --" +& fmt +& " -dcrop=#t -dresolution=200 -o "
                      +& dir +& "/" +& name +& " " +& ly_path)
     dir +& "/" +& name +& ".cropped." +& fmt
+  // engrave many cropped PNGs at once, in parallel.  `jobs` is a list of
+  // [source, dir, name]; returns their `.cropped.png` paths, in order.
+  fun engrave_cropped_all(jobs):
+    def racket_jobs = PairList(& jobs.map(fun (j): PairList(j[0], j[1], j[2])))
+    [& mpar.#{engrave-all-cropped}(racket_jobs)]
 
 define_realizer music_lilypond:
   fun (ctxt): ly_document_staves(ly_staves(ctxt))
