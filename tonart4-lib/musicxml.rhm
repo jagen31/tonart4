@@ -430,7 +430,10 @@ define_mapping_rewriter inline_music_seq over seq:
 // The notes keep their own voice / interval; the music carries the scope.
 define_rewriter wrap_in_music:
   fun (expr):
-    def scope = remove_from_ctxt(get_ctxt(expr), #'art_id)
+    // scope this by SECTION (etc.), not by the `ix__` index the section carries:
+    // the notes had their own `index` stripped during layout, so an index in the
+    // scope would match almost none of them -- collect every note in the section.
+    def scope = remove_from_ctxt(remove_from_ctxt(get_ctxt(expr), #'art_id), #'index)
     def notes = context_ref_within(current_ctxt(), scope, #'note)
                   ++ context_ref_within(current_ctxt(), scope, #'music_rest)
     cond
