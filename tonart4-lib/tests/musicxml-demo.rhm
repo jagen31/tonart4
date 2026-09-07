@@ -52,7 +52,10 @@ def snd = realize music_rsound:
             tuning equal
             a_piece
             musicxml_to_tonart
-            note_to_tone
+            // musicxml_to_tonart holds its notes in a `music` embedding, so
+            // convert them to tones inside it
+            rewrite_nested:
+              note_to_tone
 println("realized to audio -> " +& to_string(#{rs-frames}(snd)) +& " frames")
 
 // the same thing, but read from an actual .musicxml file next to this test

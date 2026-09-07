@@ -20,10 +20,11 @@ import:
 
 export:
   note tone tuning volume
+  music rewrite_in_music
   tones note_to_tone
   music_rsound rs_render
   play                       // a function (see below), unlike rsound's macro
-  meta: note_freq
+  meta: note_freq embed_items
 
 // rsound's own `play` is a macro that refuses expression context (it only
 // works at a module's top level), so it can't be called from the Rhombus
@@ -39,6 +40,27 @@ define_object note       // note pitch accidental octave, e.g. `note c 0 4`
 define_object tone       // tone freq
 define_object tuning     // tuning kind (only `equal` / 12-TET for now)
 define_object volume     // volume n
+
+// ---------------------------------------------------------------------
+// music: the standard seq-like container -- a block of items, rewritten
+// and held as its `inner` (the musicxml layer builds these; other layers
+// nest content in them).  `rewrite_in_music` runs rewriters inside one.
+// ---------------------------------------------------------------------
+
+define_embedding music:
+  fun (expr): rewrite(body_of(expr))
+
+meta:
+  // items held inside an embedding (its rewritten inner)
+  fun embed_items(e): e.group_property(#'inner) || []
+
+// rewrite_in_music: <block of rewriters>  -- for each music in scope, run
+// the rewriters seeded with its items, and rebuild it.  The `music:` template
+// lives here so its head resolves to this module's `music` binding.
+define_mapping_rewriter rewrite_in_music over music:
+  fun (stx, m):
+    def [it, ...] = rewrite_in(embed_items(m), body_of(stx))
+    [set_ctxt('music: $it ; ...', get_ctxt(m))]
 
 // ---------------------------------------------------------------------
 // note -> frequency (compile-time)
@@ -118,7 +140,9 @@ fun rs_render(specs):
 define_realizer music_rsound:
   fun (ctxt):
     def sr = 44100.0
-    def tones = context_ref_all(ctxt, #'tone)
+    // read nested: tones live inside `music` embeddings (run note_to_tone
+    // there, e.g. `rewrite_in_music: note_to_tone`), so descend to find them
+    def tones = context_ref_all_nested(ctxt, #'tone)
     cond
     | tones.length() == 0: '#{silence}(1)'
     | ~else:

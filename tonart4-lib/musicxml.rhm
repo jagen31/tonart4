@@ -32,8 +32,8 @@ export:
   extract_mxml_chords mxml_chord_to_note_group ungroup_notes
   detach_directions_from_note detach_directions_from_rest interpret_directions
   do_set
-  mxml_measure_to_measure rewrite_in_measure rewrite_in_mxml_measure
-  durations_to_intervals measure_to_music inline_music_seq
+  mxml_measure_to_measure rewrite_in_music rewrite_in_measure rewrite_in_mxml_measure
+  durations_to_intervals measure_to_music inline_music_seq wrap_in_music
   musicxml_to_tonart
   load_musicxml
   meta: expr_duration build_seq_like note_has_chord note_dirs parse_tonart
@@ -134,16 +134,17 @@ meta:
 // embeddings: seq-like containers whose block body is rewritten and held
 // ---------------------------------------------------------------------
 
-define_embedding music:
-  fun (expr): rewrite(body_of(expr))
+// `music` and `embed_items` now live in the tonart standard lib
+// (private/lib.rhm), imported open above.  `build_seq_like` stays here: it
+// splices a bare head symbol into a `head: ...` template, so the head resolves
+// in *this* module's scope, where `measure` / `mxml_measure` (and `music`, via
+// lib) are bound.
 define_embedding measure:
   fun (expr): rewrite(body_of(expr))
 define_embedding mxml_measure:
   fun (expr): rewrite(body_of(expr))
 
 meta:
-  // items held inside an embedding (its rewritten inner)
-  fun embed_items(e): e.group_property(#'inner) || []
   // rebuild an embedding form `head: item; ...` carrying src's coordinates
   fun build_seq_like(head_id, src, items):
     block:
@@ -423,6 +424,22 @@ define_mapping_rewriter inline_music_seq over seq:
 // the whole musicxml -> tonart pipeline
 // ---------------------------------------------------------------------
 
+// wrap_in_music: collect the note / music_rest forms in this rewriter's own
+// scope (its section, etc.) into a single `music` embedding, so the engraver
+// (which reads notes *inside* a music embedding, not inline) can find them.
+// The notes keep their own voice / interval; the music carries the scope.
+define_rewriter wrap_in_music:
+  fun (expr):
+    def scope = remove_from_ctxt(get_ctxt(expr), #'art_id)
+    def notes = context_ref_within(current_ctxt(), scope, #'note)
+                  ++ context_ref_within(current_ctxt(), scope, #'music_rest)
+    cond
+    | notes.length() == 0: []
+    | ~else:
+        block:
+          let [n, ...] = notes
+          notes.map(delete_expr) ++ [set_ctxt('music: $n ; ...', scope)]
+
 define_rewriter musicxml_to_tonart:
   fun (expr):
     ['rewrite_in_seq:
@@ -437,7 +454,9 @@ define_rewriter musicxml_to_tonart:
      ',
      'inline_music_seq',
      'detach_directions_from_note',
-     'detach_directions_from_rest']
+     'detach_directions_from_rest',
+     // keep the inlined timeline, but hold it inside a `music` embedding
+     'wrap_in_music']
      // like tonart3, musicxml_to_tonart stops at detached `direction`s;
      // follow with `interpret_directions` (and then `do_set`) to fire them
 

@@ -60,10 +60,11 @@ meta:
       | ~else: ""
     base +& acc +& oct
 
-  // basic durations, in sixteenth-note units, longest first
-  def basic_durs = [[16, "1"], [12, "2."], [8, "2"], [6, "4."],
-                    [4, "4"], [3, "8."], [2, "8"], [1, "16"]]
-  // a whole number of sixteenths -> list of lilypond duration strings
+  // basic durations, in thirty-second-note units, longest first (so a note as
+  // short as a 32nd -- a 1/8-beat -- engraves, not just down to a 16th)
+  def basic_durs = [[32, "1"], [24, "2."], [16, "2"], [12, "4."],
+                    [8, "4"], [6, "8."], [4, "8"], [3, "16."], [2, "16"], [1, "32"]]
+  // a whole number of thirty-seconds -> list of lilypond duration strings
   // (tied together when it isn't a single (dotted) value)
   fun units_to_lily(units):
     fun loop(remaining, acc):
@@ -75,15 +76,15 @@ meta:
               if !found && d[0] <= remaining | d | found
           if m
           | loop(remaining - m[0], acc ++ [m[1]])
-          | acc ++ ["16"]                // fallback, avoid looping
+          | acc ++ ["32"]                // fallback, avoid looping
     loop(units, [])
   // a duration in quarter notes -> lilypond duration strings
-  fun duration_to_lily(dur): units_to_lily(math.round(dur * 4))
+  fun duration_to_lily(dur): units_to_lily(math.round(dur * 8))
   // bar-aware: split `dur` (quarters) starting at absolute `start`
   // (quarters) so no piece crosses a barline of length `bar_len`
   fun duration_to_lily_bar(dur, start, bar_len):
-    def bar = math.round(bar_len * 4)
-    def bar_pos = math.round(start * 4) mod bar
+    def bar = math.round(bar_len * 8)
+    def bar_pos = math.round(start * 8) mod bar
     fun loop(remaining, pos, acc):
       cond
       | remaining <= 0: acc
@@ -91,7 +92,7 @@ meta:
           def to_end = bar - pos
           def chunk = if remaining < to_end | remaining | to_end
           loop(remaining - chunk, 0, acc ++ units_to_lily(chunk))
-    loop(math.round(dur * 4), bar_pos, [])
+    loop(math.round(dur * 8), bar_pos, [])
 
 // ---------------------------------------------------------------------
 // the realizer: notes/rests in scope -> a LilyPond document (string)
