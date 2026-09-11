@@ -21,6 +21,7 @@ import:
   meta:
     lib("racket/base.rkt") as mrkt
     lib("racket/system.rkt") as msys
+    lib("racket/file.rkt") as mfile                  // file->string (engrave cache)
     lib("tonart4/private/engrave-par.rkt") as mpar   // parallel engraving
 
 export:
@@ -244,27 +245,45 @@ meta:
   // wrap a single staff body in a complete document
   fun ly_document(body):
     ly_document_staves("    \\new Staff { \\clef treble " +& body +& " }\n")
+  // true when `name`'s `.ly` on disk is byte-identical to `source` AND the
+  // engraved `out` already exists -- so lilypond need not run again.  This is
+  // the same content cache `engrave_cropped_all` uses, lifted to the single
+  // engravers so repeated compiles of an unchanged score skip lilypond (each of
+  // these runs a lilypond process SERIALLY, so an uncached re-engrave of a
+  // program's scores is the bulk of a recompile).
+  fun engrave_fresh(ly_path, out, source):
+    mrkt.#{file-exists?}(out)
+      && mrkt.#{file-exists?}(ly_path)
+      && to_string(mfile.#{file->string}(ly_path)) == source
+  fun engrave_write_ly(ly_path, source):
+    def f = mrkt.#{open-output-file}(ly_path, ~exists: #'replace)
+    mrkt.#{write-string}(source, f)
+    mrkt.#{close-output-port}(f)
   // engrave LilyPond `source` to `dir/name.fmt` at compile time; returns
   // that path (fmt = "png" or "svg")
   fun engrave(source, dir, name, fmt):
     def ly_path = dir +& "/" +& name +& ".ly"
-    def f = mrkt.#{open-output-file}(ly_path, ~exists: #'replace)
-    mrkt.#{write-string}(source, f)
-    mrkt.#{close-output-port}(f)
-    msys.#{system}("lilypond --" +& fmt +& " -dresolution=200 -o "
-                     +& dir +& "/" +& name +& " " +& ly_path)
-    dir +& "/" +& name +& "." +& fmt
+    def out = dir +& "/" +& name +& "." +& fmt
+    cond
+    | engrave_fresh(ly_path, out, source): out
+    | ~else:
+        engrave_write_ly(ly_path, source)
+        msys.#{system}("lilypond --" +& fmt +& " -dresolution=200 -o "
+                         +& dir +& "/" +& name +& " " +& ly_path)
+        out
   // like `engrave`, but with `-dcrop` so the image is trimmed tight to the
   // music (no page whitespace) -- for placing a score inside a slide/pict.
   // Returns the `.cropped.<fmt>` path lilypond writes.
   fun engrave_cropped(source, dir, name, fmt):
     def ly_path = dir +& "/" +& name +& ".ly"
-    def f = mrkt.#{open-output-file}(ly_path, ~exists: #'replace)
-    mrkt.#{write-string}(source, f)
-    mrkt.#{close-output-port}(f)
-    msys.#{system}("lilypond --" +& fmt +& " -dcrop=#t -dresolution=200 -o "
-                     +& dir +& "/" +& name +& " " +& ly_path)
-    dir +& "/" +& name +& ".cropped." +& fmt
+    def out = dir +& "/" +& name +& ".cropped." +& fmt
+    cond
+    | engrave_fresh(ly_path, out, source): out
+    | ~else:
+        engrave_write_ly(ly_path, source)
+        msys.#{system}("lilypond --" +& fmt +& " -dcrop=#t -dresolution=200 -o "
+                         +& dir +& "/" +& name +& " " +& ly_path)
+        out
   // engrave many cropped PNGs at once, in parallel.  `jobs` is a list of
   // [source, dir, name]; returns their `.cropped.png` paths, in order.
   fun engrave_cropped_all(jobs):
