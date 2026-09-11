@@ -262,7 +262,9 @@ define_rewriter do_set:
     def sets = context_ref_within(current_ctxt(), get_ctxt(expr), #'set)
     def resets = context_ref_within(current_ctxt(), get_ctxt(expr), #'reset)
     def the_end = expr_end(expr) || piece_end(current_ctxt())
-    for values(acc = []) (s in sets):
+    // turn each `set` into an interval span, deleting the originals in ONE
+    // batched instruction (a per-set delete + `acc ++ [..]` fold is O(sets^2))
+    def spans = for List (s in sets):
       def start = expr_instant(s) || 0
       def stop = nearest_reset(start, resets) || the_end
       def s0 = Syntax.make(start)
@@ -270,8 +272,8 @@ define_rewriter do_set:
       def inner = set_inner(s)
       // the set's coordinates, minus its instant (it becomes a span now)
       def base_ctxt = remove_from_ctxt(get_ctxt(s), #'instant)
-      acc ++ [delete_expr(s),
-              set_ctxt('at [interval $s0 $e0]: $inner', base_ctxt)]
+      set_ctxt('at [interval $s0 $e0]: $inner', base_ctxt)
+    [delete_exprs(sets)] ++ spans
 
 // extract_mxml_chords: walk the notes/rests in scope and group each run of
 // a base note followed by `chord`-marked notes into one mxml_chord, giving
@@ -441,7 +443,7 @@ define_rewriter wrap_in_music:
     | ~else:
         block:
           let [n, ...] = notes
-          notes.map(delete_expr) ++ [set_ctxt('music: $n ; ...', scope)]
+          [delete_exprs(notes), set_ctxt('music: $n ; ...', scope)]
 
 define_rewriter musicxml_to_tonart:
   fun (expr):

@@ -107,11 +107,14 @@ define_rewriter tones:
 define_rewriter note_to_tone:
   fun (expr):
     def notes = context_ref_within(current_ctxt(), get_ctxt(expr), #'note)
-    for values(acc = []) (n in notes):
+    // emit all the tones, then delete all the notes in ONE batched instruction.
+    // (Emitting a `delete_expr` per note makes the engine re-scan the whole
+    // context once per note -- O(notes^2); `delete_exprs` scans once.)
+    def tones = for List (n in notes):
       def freq = Syntax.make(note_freq(n))
       // the tone inherits the note's coordinates (but not its art-id)
-      def t = set_ctxt('tone $freq', remove_from_ctxt(get_ctxt(n), #'art_id))
-      acc ++ [t, delete_expr(n)]
+      set_ctxt('tone $freq', remove_from_ctxt(get_ctxt(n), #'art_id))
+    tones ++ [delete_exprs(notes)]
 
 // ---------------------------------------------------------------------
 // the rsound realizer: turn each tone into a windowed sound and mix them
