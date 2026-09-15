@@ -50,26 +50,9 @@ define_coordinate duration:
 define_coordinate tie:
   merge: fun (l, r, _l, _r, _c): (r || l)
   within: fun (l, r, _l, _r, _c): #true
-// voice: a subset coordinate (union on merge, subset for within?)
-define_coordinate voice:
-  merge:
-    fun (l, r, _l, _r, _c):
-      cond
-      | l && r:
-          block:
-            let [a, ...] = dedup_terms(args_of(l) ++ args_of(r))
-            'voice $a ...'
-      | ~else: (r || l)
-  within:
-    fun (l, r, _l, _r, _c):
-      def ls = args_of(l).map(fun (a): a.unwrap())
-      for values(ok = #true) (x in args_of(r).map(fun (a): a.unwrap())):
-        ok && (ls.filter(~keep: fun (y): y == x).length() > 0)
+// `voice` now lives in private/lib.rhm (imported open); re-exported above
 
 meta:
-  fun dedup_terms(items):
-    for values(acc = []) (a in items):
-      if acc.filter(~keep: fun (b): b.unwrap() == a.unwrap()).length() > 0 | acc | acc ++ [a]
   // the duration value on a form, or #false
   fun expr_duration(e):
     def c = context_ref(get_ctxt(e), #'duration)

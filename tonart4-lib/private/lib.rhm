@@ -19,7 +19,7 @@ import:
     lib("racket/base.rkt") as rkt   // inexact->exact, in the realizer
 
 export:
-  note music_rest tone tuning volume
+  note music_rest tone tuning volume voice
   music rewrite_in_music
   tones note_to_tone
   music_rsound rs_render
@@ -39,6 +39,28 @@ fun play(snd): #{play/proc}(snd)
 define_object note       // note pitch accidental octave, e.g. `note c 0 4`
 define_object music_rest // a rest (spans its interval); renders as `r` / silence
 define_object tone       // tone freq
+
+meta:
+  fun dedup_terms(items):
+    for values(acc = []) (a in items):
+      if acc.filter(~keep: fun (b): b.unwrap() == a.unwrap()).length() > 0 | acc | acc ++ [a]
+
+// voice: a subset coordinate (union on merge, subset for within?) -- names the
+// part a form belongs to; two voices in one section duet, each its own row/staff
+define_coordinate voice:
+  merge:
+    fun (l, r, _l, _r, _c):
+      cond
+      | l && r:
+          block:
+            let [a, ...] = dedup_terms(args_of(l) ++ args_of(r))
+            'voice $a ...'
+      | ~else: (r || l)
+  within:
+    fun (l, r, _l, _r, _c):
+      def ls = args_of(l).map(fun (a): a.unwrap())
+      for values(ok = #true) (x in args_of(r).map(fun (a): a.unwrap())):
+        ok && (ls.filter(~keep: fun (y): y == x).length() > 0)
 define_object tuning     // tuning kind (only `equal` / 12-TET for now)
 define_object volume     // volume n
 
