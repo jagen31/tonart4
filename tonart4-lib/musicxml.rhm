@@ -83,7 +83,7 @@ define_object mxml_note      // mxml_note p a o type [chord]   (parsed note)
 define_object mxml_rest      // mxml_rest type
 define_object mxml_chord     // mxml_chord [[p,a,o], ...] type  (grouped notes)
 define_object note_group     // note_group [[p,a,o], ...]       (simultaneous notes)
-define_object music_rest     // a tonart rest
+// music_rest now lives in private/lib.rhm (imported open); re-exported above
 define_object time_sig       // time_sig n d
 define_object divisions      // divisions n
 define_object direction      // direction "tonart-source"  (before interpreting)

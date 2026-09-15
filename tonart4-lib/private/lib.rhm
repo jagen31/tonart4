@@ -19,7 +19,7 @@ import:
     lib("racket/base.rkt") as rkt   // inexact->exact, in the realizer
 
 export:
-  note tone tuning volume
+  note music_rest tone tuning volume
   music rewrite_in_music
   tones note_to_tone
   music_rsound rs_render
@@ -37,6 +37,7 @@ fun play(snd): #{play/proc}(snd)
 // ---------------------------------------------------------------------
 
 define_object note       // note pitch accidental octave, e.g. `note c 0 4`
+define_object music_rest // a rest (spans its interval); renders as `r` / silence
 define_object tone       // tone freq
 define_object tuning     // tuning kind (only `equal` / 12-TET for now)
 define_object volume     // volume n
