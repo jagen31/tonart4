@@ -18,11 +18,12 @@ import:
   "private/lib.rhm" open        // note (we read `note` / music_rest)
   lib("racket/base.rkt") as rkt
   lib("racket/system.rkt") as sys
+  lib("tonart4/private/engrave-par.rkt") as par    // lilypond-exe (runtime engrave)
   meta:
     lib("racket/base.rkt") as mrkt
     lib("racket/system.rkt") as msys
     lib("racket/file.rkt") as mfile                  // file->string (engrave cache)
-    lib("tonart4/private/engrave-par.rkt") as mpar   // parallel engraving
+    lib("tonart4/private/engrave-par.rkt") as mpar   // parallel engraving + lilypond-exe
 
 export:
   music_lilypond image
@@ -261,27 +262,32 @@ meta:
     mrkt.#{close-output-port}(f)
   // engrave LilyPond `source` to `dir/name.fmt` at compile time; returns
   // that path (fmt = "png" or "svg")
-  fun engrave(source, dir, name, fmt):
+  fun engrave(source0, dir, name, fmt):
+    // fold referenced images' content into the cache key (see cache-key-source)
+    def source = mpar.#{cache-key-source}(source0)
     def ly_path = dir +& "/" +& name +& ".ly"
     def out = dir +& "/" +& name +& "." +& fmt
     cond
     | engrave_fresh(ly_path, out, source): out
     | ~else:
         engrave_write_ly(ly_path, source)
-        msys.#{system}("lilypond --" +& fmt +& " -dresolution=200 -o "
+        mpar.#{ensure-lilypond-path!}()
+        msys.#{system}("\"" +& mpar.#{lilypond-exe}() +& "\" --" +& fmt +& " -dresolution=200 -o "
                          +& dir +& "/" +& name +& " " +& ly_path)
         out
   // like `engrave`, but with `-dcrop` so the image is trimmed tight to the
   // music (no page whitespace) -- for placing a score inside a slide/pict.
   // Returns the `.cropped.<fmt>` path lilypond writes.
-  fun engrave_cropped(source, dir, name, fmt):
+  fun engrave_cropped(source0, dir, name, fmt):
+    def source = mpar.#{cache-key-source}(source0)
     def ly_path = dir +& "/" +& name +& ".ly"
     def out = dir +& "/" +& name +& ".cropped." +& fmt
     cond
     | engrave_fresh(ly_path, out, source): out
     | ~else:
         engrave_write_ly(ly_path, source)
-        msys.#{system}("lilypond --" +& fmt +& " -dcrop=#t -dresolution=200 -o "
+        mpar.#{ensure-lilypond-path!}()
+        msys.#{system}("\"" +& mpar.#{lilypond-exe}() +& "\" --" +& fmt +& " -dcrop=#t -dresolution=200 -o "
                          +& dir +& "/" +& name +& " " +& ly_path)
         out
   // engrave many cropped PNGs at once, in parallel.  `jobs` is a list of
@@ -306,7 +312,8 @@ fun lilypond_render(source, dir, name, fmt):
   def f = rkt.#{open-output-file}(ly_path, ~exists: #'replace)
   rkt.#{write-string}(source, f)
   rkt.#{close-output-port}(f)
-  def ok = sys.#{system}("lilypond --" +& fmt +& " -dresolution=200 -o "
+  par.#{ensure-lilypond-path!}()
+  def ok = sys.#{system}("\"" +& par.#{lilypond-exe}() +& "\" --" +& fmt +& " -dresolution=200 -o "
                            +& out +& " " +& ly_path)
   out +& "." +& fmt
 fun lilypond_png(source, dir, name): lilypond_render(source, dir, name, "png")
