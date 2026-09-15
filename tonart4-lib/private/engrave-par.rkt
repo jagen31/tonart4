@@ -17,7 +17,8 @@
          file/sha1
          (only-in racket/future processor-count))
 
-(provide engrave-all-cropped cache-key-source find-lilypond lilypond-exe ensure-lilypond-path!)
+(provide engrave-all-cropped cache-key-source scribble-image-tag
+         find-lilypond lilypond-exe ensure-lilypond-path!)
 
 (define (cpu-cap)
   (max 2 (min 12 (processor-count))))
@@ -36,20 +37,27 @@
       (regexp-replace* creation-date-rx (file->bytes p) #"")
       #""))
 
-(define (cache-key-source src)
+;; a content digest of the image files whose paths `rx` (capture group 1) finds
+;; in `text` -- so a cache keyed on `text` also tracks those files' contents
+(define (image-content-digest text rx)
   (define paths
-    (sort (remove-duplicates
-           (regexp-match* #px"#\"([^\"]+\\.(?:eps|png))\"" src #:match-select cadr))
-          string<?))
-  (cond
-    [(null? paths) src]
-    [else
-     (define blob
-       (apply bytes-append
-              (for/list ([p (in-list paths)])
-                (bytes-append (string->bytes/utf-8 p) #"\0"
-                              (image-bytes-for-hash p) #"\0"))))
-     (string-append "% image-deps " (sha1 (open-input-bytes blob)) "\n" src)]))
+    (sort (remove-duplicates (regexp-match* rx text #:match-select cadr)) string<?))
+  (define blob
+    (apply bytes-append
+           (for/list ([p (in-list paths)])
+             (bytes-append (string->bytes/utf-8 p) #"\0" (image-bytes-for-hash p) #"\0"))))
+  (values paths (sha1 (open-input-bytes blob))))
+
+(define (cache-key-source src)
+  (define-values (paths digest) (image-content-digest src #px"#\"([^\"]+\\.(?:eps|png))\""))
+  (if (null? paths) src (string-append "% image-deps " digest "\n" src)))
+
+;; digest of the images a scribble document references via @image["..."] -- the
+;; render_program_png cache keys on the scribble text, which names the engraved
+;; score PNGs only by path, so a redrawn figure (new PNG content) must change it
+(define (scribble-image-tag source)
+  (define-values (paths digest) (image-content-digest source #px"@image\\[\"([^\"]+)\""))
+  digest)
 
 (define (engrave-all-cropped jobs [k (cpu-cap)])
   (ensure-lilypond-path!)
